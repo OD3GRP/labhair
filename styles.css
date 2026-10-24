@@ -243,3 +243,36 @@ body.kidmode #app{gap:14px}
 .transport{display:flex;justify-content:center;align-items:center;gap:18px;margin:6px 0}
 .iconbtn.big{width:60px;height:60px;border-radius:50%;font-size:24px}
 .iconbtn.big.play{width:84px;height:84px;font-size:34px;background:var(--green);color:var(--green-ink);border-color:var(--green)}
+
+/* ---------- Talk-back coach, An Spideog, listening, weak words ---------- */
+.coach{display:flex;gap:10px;align-items:flex-start;background:var(--green-soft);color:var(--fg);border-radius:16px;padding:10px 12px}
+.coach .cast{width:56px;height:56px;flex:none;animation:none}
+.coach-body{display:flex;flex-direction:column;gap:8px;min-width:0}
+.coach-body p{font-size:15px}
+.coach-more{border-left:3px solid var(--green);padding-left:10px}
+.robin{position:fixed;right:max(14px, env(safe-area-inset-right, 0px));bottom:calc(16px + env(safe-area-inset-bottom, 0px));width:74px;height:74px;border-radius:50%;border:2px solid var(--line);background:var(--surface);box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer;padding:4px;z-index:20}
+.robin .cast{width:100%;height:100%;animation:none}
+.robin-tip{position:absolute;right:66px;bottom:46px;background:var(--gorse);color:var(--gorse-ink);font-weight:800;font-size:13px;padding:4px 10px;border-radius:999px;white-space:nowrap}
+@media (prefers-reduced-motion: no-preference){ .robin.hop{animation:hop .7s ease-out 2} }
+@keyframes hop{0%,100%{transform:translateY(0)}40%{transform:translateY(-14px)}}
+.sheet-wrap{position:fixed;inset:0;background:rgba(10,16,20,.45);z-index:30;display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:100%;max-width:560px;max-height:85vh;overflow:auto;background:var(--surface);border-radius:22px 22px 0 0;padding:16px 16px calc(20px + env(safe-area-inset-bottom, 0px));display:flex;flex-direction:column;gap:12px}
+.sheet-head{display:flex;align-items:center;gap:10px}
+.sheet-head > div{flex:1;display:flex;flex-direction:column}
+.sheet-head small{color:var(--muted);font-size:13px}
+.sheet .cast{width:52px;height:52px;animation:none}
+.sheet .w{border:none;cursor:pointer;font-family:inherit}
+.sheet-coach{font-size:14px;color:var(--muted);margin-top:8px}
+.sheet-coach a{color:var(--green-text)}
+.dial{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+.dial-name{font-size:12px;font-weight:800;color:var(--muted);width:100%}
+.dial small{color:var(--muted)}
+.options{display:flex;flex-direction:column;gap:8px}
+.option{min-height:48px;text-align:left;padding:10px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--bg);color:var(--fg);font-size:16px;font-weight:700;cursor:pointer}
+.option.right{border-color:var(--green);background:var(--green-soft);color:var(--green-text)}
+.option.wrong{border-color:var(--red-text);background:var(--red-soft);color:var(--red-text)}
+.option[disabled]{cursor:default}
+.weak-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}
+.weak-row a{display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:17px;color:var(--green-text);text-decoration:none}
+.weak-row small{flex:1;color:var(--muted);font-size:13px}
+body.kidmode .robin{display:none}

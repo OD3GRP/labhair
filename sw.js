@@ -1,8 +1,8 @@
 // Offline cache for Labhair. Bump VERSION whenever you change any app file so phones pick up the update.
-const VERSION = 'labhair-v10';
+const VERSION = 'labhair-v11';
 // Audio lives in its own long-lived cache (filled by the page, see warmAudio in app.js), so updates don't re-download it.
 const AUDIO_CACHE = 'labhair-audio';
-const FILES = ['./', './index.html', './styles.css', './app.js', './content.js', './content-c.js', './content-m.js', './course.js', './kids.js', './cast.js', './kids-ui.js', './commute.js', './art/index.json',
+const FILES = ['./', './index.html', './styles.css', './app.js', './content.js', './content-c.js', './content-m.js', './course.js', './kids.js', './cast.js', './kids-ui.js', './commute.js', './advisor.js', './art/index.json',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/abair-logo.svg'];
 
 self.addEventListener('install', e => {

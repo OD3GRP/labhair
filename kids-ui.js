@@ -12,7 +12,6 @@ function kidAudio(T, rel, text){ loadAudioIndex(kidSet()); return audioUrl(kidSe
 const wordAudio = (T, i) => kidAudio(T, (i + 1) + '.mp3', kt(T.words[i][1]));
 const sentAudio = (T, i) => kidAudio(T, (T.words.length + i + 1) + '.mp3', kt(T.sentences[i][0]));
 const lineAudio = (T, key) => kidAudio(T, key + '.mp3', window.KIDS.lines[key]);
-const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
 // Play a clip with the host's mouth moving; falls back to the phone's Irish voice.
 function kidPlay(url, host, text){

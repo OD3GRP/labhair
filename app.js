@@ -34,6 +34,7 @@ const store = {
   get(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e){ return d; } },
   set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
 };
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const today = () => ymd(new Date());
 const yesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); return ymd(d); };
@@ -112,24 +113,30 @@ function learnedItems(){
   const seen = new Set(), out = [];
   for (const L of allLessons()){
     if (L.checkpoint || !progress.done[L.id]) continue;
-    const add = (ga, en, sound, n) => { if (!seen.has(ga)){ seen.add(ga); out.push({ga, en, sound, L, n}); } };
-    L.phrases.forEach((p, i) => add(p[0], p[1], p[2], i + 1));
-    L.drills.forEach((d, j) => add(d[1], d[0], '', L.phrases.length + j + 1));
+    const add = (ga, en, sound, n, note) => { if (!seen.has(ga)){ seen.add(ga); out.push({ga, en, sound, L, n, note}); } };
+    L.phrases.forEach((p, i) => add(p[0], p[1], p[2], i + 1, p[4]));
+    L.drills.forEach((d, j) => add(d[1], d[0], '', L.phrases.length + j + 1, null));
   }
   return out;
 }
 const isDue = it => { const s = itemStats()[it.ga]; return !s || s.due <= today(); };
 // Today's set: due items first (lowest box, then worst last score), topped up with the least-practised others.
 const REVIEW_SIZE = 10;
-function pickReview(){
+// words: limit the set to items containing any of these words (the weak-words practice).
+function pickReview(words){
   const rank = it => { const s = itemStats()[it.ga] || {box:0, last:0}; return s.box * 10 + (s.last || 0); };
-  const all = learnedItems();
+  let all = learnedItems();
+  if (words && words.length) all = all.filter(it => toWords(it.ga).some(w => words.includes(w)));
   const due = all.filter(isDue).sort((a, b) => rank(a) - rank(b));
   const rest = all.filter(it => !isDue(it)).sort((a, b) => rank(a) - rank(b));
   const pick = due.concat(rest).slice(0, REVIEW_SIZE);
   for (let i = pick.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [pick[i], pick[j]] = [pick[j], pick[i]]; }
-  // New or shaky items: hear and repeat. Items you know: build from the English.
-  return pick.map(it => ({...it, mode: ((itemStats()[it.ga] || {}).box || 0) >= 2 ? 'build' : 'say'}));
+  // New or shaky items: hear and repeat. Items you know: build from the English, or every third one, listen and pick the meaning.
+  let n = 0;
+  return pick.map(it => {
+    const box = (itemStats()[it.ga] || {}).box || 0;
+    return {...it, mode: box === 0 ? 'say' : (n++ % 3 === 2 ? 'listen' : box >= 2 ? 'build' : 'say')};
+  });
 }
 
 /* ---------- Speech: recognition (mic) and Irish voice if the phone has one ---------- */
@@ -277,6 +284,8 @@ function slowBtn(src, text, props){
   return h('button', {type:'button', 'aria-label':'Play slowly: ' + text, ...props, onclick:() => playAudio(src, 0.75)}, '🐢 Mall');
 }
 
+// How sure the recogniser was about the last thing you said (0–1, or 0 if it didn't say). Typed answers reset it.
+let lastConfidence = 0;
 // The answer box: a text area plus a mic button that fills it with what you said.
 function answerBox(label, onFinal){
   const ta = h('textarea', {id:'answer', rows:'2', autocomplete:'off', autocapitalize:'sentences', spellcheck:'false', lang:'ga', placeholder: SR ? 'Tap the mic and speak, or type' : 'Type your answer'});
@@ -296,7 +305,8 @@ function answerBox(label, onFinal){
     r.onresult = e => {
       let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
       ta.value = t;
-      if (e.results[e.results.length - 1].isFinal) finalText = t;
+      const last = e.results[e.results.length - 1];
+      if (last.isFinal){ finalText = t; lastConfidence = last[0].confidence || 0; }
     };
     r.onerror = e => { failed = true; status.textContent = micError(e.error); };
     r.onend = () => {
@@ -417,7 +427,7 @@ function claudeErrorText(e){
 /* ---------- Views ---------- */
 let view = {name: profiles.list.length > 1 ? 'profiles' : 'home'};
 const VIEWS = {home: () => isKid() ? kidHomeView() : homeView(), settings: () => settingsView(), review: () => reviewView(), profiles: () => profilesView(), lesson: () => lessonView()};
-function render(){ stopMic(); stopRec(false); document.body.classList.toggle('kidmode', isKid()); $app.replaceChildren((VIEWS[view.name] || VIEWS.home)()); }
+function render(){ stopMic(); stopRec(false); document.body.classList.toggle('kidmode', isKid()); $app.replaceChildren((VIEWS[view.name] || VIEWS.home)()); if (window.afterRender) afterRender(); }
 const DIALECT_NAMES = {u:'Gaeilge Uladh', c:'Gaeilge Chonnacht', m:'Gaeilge na Mumhan'};
 // A dialect can be chosen once its content file has loaded (content-c.js / content-m.js).
 const dialectReady = d => d === 'u' || !!(window.DIALECTS && window.DIALECTS[d]);
@@ -452,7 +462,8 @@ function homeView(){
       h('button', {type:'button', class:'btn ' + (doneToday || !due ? '' : 'primary'), onclick:openReview}, doneToday || !due ? 'Practise more' : 'Tosaigh · Start')));
   }
   frag.append(h('div', {class:'tools'},
-    h('button', {type:'button', class:'tool', onclick:() => openCommute()}, h('span', {'aria-hidden':'true'}, '🎧'), h('strong', null, 'Hands-free'), h('small', null, 'For a walk or the car'))));
+    h('button', {type:'button', class:'tool', onclick:() => openCommute()}, h('span', {'aria-hidden':'true'}, '🎧'), h('strong', null, 'Hands-free'), h('small', null, 'For a walk or the car')),
+    Object.keys(progress.weak || {}).length ? h('button', {type:'button', class:'tool', onclick:() => { view = {name:'weak'}; render(); window.scrollTo(0, 0); }}, h('span', {'aria-hidden':'true'}, '🎯'), h('strong', null, 'Weak words'), h('small', null, Object.keys(progress.weak).length + ' to practise')) : null));
   for (const U of course()){
     const done = U.lessons.filter(l => progress.done[l.id]).length;
     frag.append(
@@ -508,17 +519,32 @@ function resultBlock(check){
     h('span', {class:'verdict'}, msg),
     h('div', {class:'words'}, check.res.map(r => h('span', {class:'w ' + r.s}, r.w))),
     h('p', {class:'heard'}, 'You said: ', h('b', {lang:'ga'}, check.said)),
-    h('span', {class:'legend'}, 'Green: right · Yellow: check the fada (accent) · Red: missing or different'));
+    h('span', {class:'legend'}, 'Green: right · Yellow: check the fada (accent) · Red: missing or different'),
+    window.coachBox ? coachBox(view) : null);
 }
 function doCheck(expected, text){
   const said = text || answerText();
   if (!said) return;
   view.check = grade(expected, said);
+  view.check.conf = text ? lastConfidence : 0;   // typed answers have no recogniser confidence
   if (view.check.score >= 0.85){ progress.said = (progress.said || 0) + 1; saveProgress(); }
   // Only the first try at each item counts towards review scheduling.
   view.noted = view.noted || {};
   if (!view.noted[expected]){ view.noted[expected] = view.check.score; noteItem(expected, view.check.score); }
+  noteWeak(view.check);
+  // The talk-back coach (advisor.js) explains the result, and says it aloud if that's switched on.
+  view.coach = window.coachFor ? coachFor(expected, view.check, view) : null;
   render();
+  if (view.coach && settings.talkBack !== false) sayEnglish(view.coach.text);
+}
+// Weak words: each miss or fada slip adds a point, each clean hit takes one away.
+function noteWeak(check){
+  const w = progress.weak || (progress.weak = {});
+  for (const r of check.res){
+    if (r.s === 'ok'){ if (w[r.w]) { w[r.w]--; if (!w[r.w]) delete w[r.w]; } }
+    else w[r.w] = (w[r.w] || 0) + 1;
+  }
+  saveProgress();
 }
 function hearRow(P, src){
   return h('div', {class:'hear'}, 'Hear it:',
@@ -648,12 +674,32 @@ function profileForm(p){
 }
 
 /* ---------- Athbhreithniú: daily review ---------- */
-function openReview(){
-  const items = pickReview();
+function openReview(words){
+  const items = pickReview(Array.isArray(words) ? words : null);
   if (!items.length) return;
   dropTakes();
   view = {name:'review', items, idx:0, check:null, reveal:false, noted:{}, takes:{}, retried:{}, done:false};
   render(); window.scrollTo(0, 0);
+}
+// Listening: hear it, pick what it means from four.
+function listenCard(card, it, src){
+  const v = view;
+  if (!v.options || v.optionsFor !== v.idx){
+    const others = shuffle(learnedItems().filter(x => x.en !== it.en)).slice(0, 3).map(x => x.en);
+    v.options = shuffle([it.en].concat(others)); v.optionsFor = v.idx; v.picked = null;
+    setTimeout(() => { if (view === v && src) playAudio(src); }, 250);
+  }
+  const answered = v.picked != null;
+  put(card,
+    h('p', {class:'en', style:'font-size:14px'}, 'What does ' + nativeName() + ' say?'),
+    h('div', {class:'hear'}, playBtn(src, it.ga), slowBtn(src, it.ga)),
+    h('div', {class:'options'}, v.options.map(o => h('button', {type:'button', class:'option' + (answered && o === it.en ? ' right' : '') + (answered && o === v.picked && o !== it.en ? ' wrong' : ''), disabled: answered ? true : null, onclick:() => {
+      v.picked = o;
+      if (!(it.ga in v.noted)){ const s = o === it.en ? 1 : 0; v.noted[it.ga] = s; noteItem(it.ga, s); }
+      render();
+    }}, o))),
+    answered ? h('p', {class:'reveal'}, h('b', {lang:'ga'}, it.ga), ' · ', it.en) : null,
+    answered ? h('div', {class:'row'}, h('button', {type:'button', class:'btn primary grow', onclick:() => { v.options = null; reviewNext(); }}, v.idx === v.items.length - 1 ? 'Críochnaigh · Finish' : 'Next')) : null);
 }
 function reviewNext(){
   const v = view, it = v.items[v.idx];
@@ -674,11 +720,13 @@ function reviewView(){
       h('i', {style:'width:' + Math.round(pos / total * 100) + '%'}))));
   if (v.done) return frag.append(reviewDone()), frag;
   const it = v.items[v.idx], src = audioFor(it.L, it.n, it.ga);
+  const mode = it.mode === 'listen' && !src ? 'build' : it.mode;   // no audio, no listening
   const card = h('section', {class:'card', 'aria-label':'Review'},
     h('div', {style:'display:flex;justify-content:space-between;align-items:baseline;gap:8px'},
-      h('span', {class:'eyebrow', style:'color:var(--muted)'}, it.retry ? 'Arís · One more go' : it.mode === 'say' ? 'Abair é · Say it' : 'Tóg é · Build it'),
+      h('span', {class:'eyebrow', style:'color:var(--muted)'}, it.retry ? 'Arís · One more go' : mode === 'say' ? 'Abair é · Say it' : mode === 'listen' ? 'Éist · Listen' : 'Tóg é · Build it'),
       h('span', {class:'counter'}, (v.idx + 1) + ' de ' + total)));
-  if (it.mode === 'say'){
+  if (mode === 'listen'){ listenCard(card, it, src); frag.append(card); return frag; }
+  if (mode === 'say'){
     put(card, 
       h('div', null, h('p', {class:'phrase', lang:'ga'}, it.ga), h('p', {class:'en'}, it.en)),
       it.sound ? h('p', {class:'say'}, 'Sound it out: ', h('b', null, it.sound)) : null,
@@ -691,7 +739,7 @@ function reviewView(){
         : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { v.reveal = true; render(); }}, 'Show me the answer'));
   }
   put(card, 
-    v.check ? null : answerBox(it.mode === 'say' ? 'Now say it' : 'Say it in Irish', text => doCheck(it.ga, text)),
+    v.check ? null : answerBox(mode === 'say' ? 'Now say it' : 'Say it in Irish', text => doCheck(it.ga, text)),
     resultBlock(v.check),
     h('div', {class:'row'}, v.check
       ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
@@ -909,15 +957,17 @@ function settingsView(){
   const azKeyIn = h('input', {type:'password', id:'azkey', autocomplete:'off', placeholder:'Azure Speech key', value:settings.azureKey});
   const azRegionIn = h('input', {type:'text', id:'azregion', autocomplete:'off', autocapitalize:'none', spellcheck:'false', placeholder:'e.g. uksouth', value:settings.azureRegion});
   const autoPlayIn = h('input', {type:'checkbox', id:'autoplay', checked: settings.autoPlay ? true : null, style:'width:22px;height:22px'});
+  const talkBackIn = h('input', {type:'checkbox', id:'talkback', checked: settings.talkBack !== false ? true : null, style:'width:22px;height:22px'});
   const voiceMsg = h('p', {class:'miclabel', role:'status'});
-  const saveVoice = () => { settings = {...settings, azureKey:azKeyIn.value.trim(), azureRegion:azRegionIn.value.trim().toLowerCase().replace(/\s+/g, ''), autoPlay:autoPlayIn.checked}; saveSettings(); };
+  const saveVoice = () => { settings = {...settings, azureKey:azKeyIn.value.trim(), azureRegion:azRegionIn.value.trim().toLowerCase().replace(/\s+/g, ''), autoPlay:autoPlayIn.checked, talkBack:talkBackIn.checked}; saveSettings(); };
   frag.append(h('section', {class:'card', 'aria-label':'Gráinne’s voice'},
     h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Gráinne’s voice'),
     h('div', {class:'field'}, h('label', {class:'lbl', for:'azkey'}, 'Azure Speech key'), azKeyIn,
       h('small', null, 'Stored only on this phone and sent only to Microsoft. From your Speech resource in ', h('a', {href:'https://portal.azure.com', target:'_blank', rel:'noopener'}, 'portal.azure.com'), ' → Keys and Endpoint.')),
     h('div', {class:'field'}, h('label', {class:'lbl', for:'azregion'}, 'Azure region'), azRegionIn,
       h('small', null, 'The “Location/Region” shown next to your key.')),
-    h('label', {class:'row', for:'autoplay', style:'align-items:center;font-weight:700'}, autoPlayIn, 'Play Gráinne’s replies aloud'),
+    h('label', {class:'row', for:'autoplay', style:'align-items:center;font-weight:700'}, autoPlayIn, 'Play ' + tutor().name + '’s replies aloud'),
+    h('label', {class:'row', for:'talkback', style:'align-items:center;font-weight:700'}, talkBackIn, 'Talk back in English after each try (the coach)'),
     h('div', {class:'row'},
       h('button', {type:'button', class:'btn', onclick: async () => {
         saveVoice();
