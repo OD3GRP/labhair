@@ -1,6 +1,6 @@
 // Makes the app's audio with the ABAIR API (abair.ie, Trinity College Dublin). Node 18+, no packages.
 //   node tools/make-audio.mjs                 make any missing or out-of-date MP3s for Ulster (set u)
-//   node tools/make-audio.mjs --set c         Connacht (c), Munster (m), kids' sets k-u, k-c, k-m, or scenes sc-u, sc-c, sc-m
+//   node tools/make-audio.mjs --set c         Connacht (c), Munster (m), kids' sets k-u, k-c, k-m, scenes sc-u, sc-c, sc-m, or stories st-u, st-c, st-m
 //   node tools/make-audio.mjs --unit u2       only that unit (ABAIR asks for no bulk sweeps, so go a unit at a time)
 //   node tools/make-audio.mjs --voices        list the voices your key can use
 // Needs ABAIR_API_KEY in .env (gitignored). Optional: ABAIR_VOICE (Ulster voice id), ABAIR_VOICE_C, ABAIR_VOICE_M, ABAIR_SPEED (default 0.9).
@@ -41,7 +41,7 @@ async function call(url, opts, tries = 4){
 // Load the app's content files the same way the browser does.
 function loadContent(){
   const sandbox = {window:{}};
-  for (const f of ['content.js', 'content-c.js', 'content-m.js', 'course.js', 'kids.js', 'scenes.js']){
+  for (const f of ['content.js', 'content-c.js', 'content-m.js', 'course.js', 'kids.js', 'scenes.js', 'stories.js']){
     const p = path.join(ROOT, f);
     if (fs.existsSync(p)) vm.runInNewContext(fs.readFileSync(p, 'utf8'), sandbox);
   }
@@ -52,6 +52,10 @@ const DEFAULT_VOICES = {u: env.ABAIR_VOICE || 'anb.piper', c: env.ABAIR_VOICE_C 
 
 // Every file a set needs: [{rel, text, voice, unit}]
 function jobsFor(W, set, unitFilter){
+  if (set.startsWith('st-')){
+    if (!W.storyAudioJobs) throw new Error('stories.js has no storyAudioJobs');
+    return W.storyAudioJobs(set.slice(3)).filter(j => !unitFilter || j.unit === unitFilter);
+  }
   if (set.startsWith('sc-')){
     if (!W.sceneAudioJobs) throw new Error('scenes.js has no sceneAudioJobs');
     return W.sceneAudioJobs(set.slice(3)).filter(j => !unitFilter || j.unit === unitFilter);

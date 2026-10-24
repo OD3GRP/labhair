@@ -473,6 +473,8 @@ function homeView(){
   }
   frag.append(h('div', {class:'tools'},
     h('button', {type:'button', class:'tool', onclick:() => openCommute()}, h('span', {'aria-hidden':'true'}, '🎧'), h('strong', null, 'Hands-free'), h('small', null, 'For a walk or the car')),
+    h('button', {type:'button', class:'tool', onclick:() => openStories()}, h('span', {'aria-hidden':'true'}, '📖'), h('strong', null, 'Stories'), h('small', null, 'Read along, tap words')),
+    window.togetherCard ? togetherCard() : null,
     h('button', {type:'button', class:'tool', onclick:() => openScenes()}, h('span', {'aria-hidden':'true'}, '🎬'), h('strong', null, 'Scenes'), h('small', null, 'Watch, then join in')),
     canFreeChat() ? h('button', {type:'button', class:'tool', onclick:() => openFreeChat()}, h('span', {'aria-hidden':'true'}, '💬'), h('strong', null, 'Free chat'), h('small', null, 'Talk about anything with ' + tutor().name)) : null,
     Object.keys(progress.weak || {}).length ? h('button', {type:'button', class:'tool', onclick:() => { view = {name:'weak'}; render(); window.scrollTo(0, 0); }}, h('span', {'aria-hidden':'true'}, '🎯'), h('strong', null, 'Weak words'), h('small', null, Object.keys(progress.weak).length + ' to practise')) : null));
