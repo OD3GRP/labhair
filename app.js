@@ -201,7 +201,7 @@ async function warmAudio(){
 }
 const warmSoon = () => setTimeout(() => warmAudio().catch(() => {}), 3000);
 const player = new Audio();
-function playAudio(src){ try { speechSynthesis.cancel(); } catch(e){} player.onended = null; player.src = src; player.currentTime = 0; player.play().catch(() => {}); }
+function playAudio(src){ try { speechSynthesis.cancel(); } catch(e){} player.onended = null; player.onpause = null; player.src = src; player.currentTime = 0; player.play().catch(() => {}); }
 // Play several clips one after another (native, then my take).
 function playSeq(srcs){
   const [first, ...rest] = srcs;
@@ -364,18 +364,11 @@ function claudeErrorText(e){
 /* ---------- Views ---------- */
 let view = {name: profiles.list.length > 1 ? 'profiles' : 'home'};
 const VIEWS = {home: () => isKid() ? kidHomeView() : homeView(), settings: () => settingsView(), review: () => reviewView(), profiles: () => profilesView(), lesson: () => lessonView()};
-function render(){ stopMic(); stopRec(false); $app.replaceChildren((VIEWS[view.name] || VIEWS.home)()); }
+function render(){ stopMic(); stopRec(false); document.body.classList.toggle('kidmode', isKid()); $app.replaceChildren((VIEWS[view.name] || VIEWS.home)()); }
 const DIALECT_NAMES = {u:'Gaeilge Uladh', c:'Gaeilge Chonnacht', m:'Gaeilge na Mumhan'};
 // A dialect can be chosen once its content file has loaded (content-c.js / content-m.js).
 const dialectReady = d => d === 'u' || !!(window.DIALECTS && window.DIALECTS[d]);
-
-// Kid mode home (filled in by kid mode; this is the fallback).
-function kidHomeView(){
-  return h('section', {class:'card', style:'align-items:center;text-align:center'},
-    h('p', {style:'font-size:56px'}, me().avatar),
-    h('p', {style:'font-weight:800;font-size:20px'}, 'Dia duit, ' + me().name + '!'),
-    h('button', {type:'button', class:'btn', onclick:() => { view = {name:'profiles'}; render(); }}, 'Switch person'));
-}
+// Kid mode views (kidHomeView, VIEWS.kid) live in kids-ui.js.
 function goHome(){ if (view.chat && view.chat.ctl) view.chat.ctl.abort(); dropTakes(); view = {name:'home'}; render(); window.scrollTo(0, 0); }
 
 function homeView(){
@@ -931,7 +924,7 @@ function settingsView(){
   return frag;
 }
 
-/* ---------- Start ---------- */
-render();
+/* ---------- Start (after every script has loaded, so kid mode and the rest are in place) ---------- */
+document.addEventListener('DOMContentLoaded', () => render());
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 warmSoon();
