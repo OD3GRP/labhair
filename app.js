@@ -198,7 +198,10 @@ function pickReview(words){
 /* ---------- Speech: recognition (mic) and Irish voice if the phone has one ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let activeRec = null;
-function stopMic(){ if (activeRec){ try { activeRec.abort(); } catch(e){} activeRec = null; } }
+function stopMic(){
+  if (activeRec){ try { activeRec.abort(); } catch(e){} activeRec = null; }
+  if (window.activeListen) activeListen.cancel();   // Azure recognition (listen.js)
+}
 function micError(code){
   return ({
     'not-allowed':'Microphone is blocked. In Chrome, tap the icon left of the address and allow the microphone, then try again.',
@@ -359,13 +362,38 @@ let lastConfidence = 0;
 let autoMic = false;
 // The answer box: a text area plus a mic button that fills it with what you said.
 function answerBox(label, onFinal){
-  const ta = h('textarea', {id:'answer', rows:'2', autocomplete:'off', autocapitalize:'sentences', spellcheck:'false', lang:'ga', placeholder: SR ? 'Tap the mic and speak, or type' : 'Type your answer'});
-  const status = h('p', {class:'miclabel', role:'status'}, SR ? 'Tap the mic and say it in Irish' : 'This browser has no speech recognition. Use Chrome on Android, or type.');
+  const azure = window.useAzureSTT && useAzureSTT(), canMic = !!SR || azure;
+  const ta = h('textarea', {id:'answer', rows:'2', autocomplete:'off', autocapitalize:'sentences', spellcheck:'false', lang:'ga', placeholder: canMic ? 'Tap the mic and speak, or type' : 'Type your answer'});
+  const status = h('p', {class:'miclabel', role:'status'}, canMic ? 'Tap the mic and say it in Irish' : 'This browser has no speech recognition. Use Chrome on Android, or type.');
   let mic = null;
-  if (SR){
+  if (canMic){
     mic = h('button', {type:'button', class:'mic', 'aria-label':'Speak your answer', 'aria-pressed':'false', onclick: toggle}, icon(I.mic, 28));
   }
+  // Azure: record, let it find the end of your speech, then send it off. Tap again to finish early.
+  async function toggleAzure(){
+    if (window.activeListen){ activeListen.stop(); return; }
+    player.pause(); try { speechSynthesis.cancel(); } catch(e){}
+    stopRec(false);
+    const L = azureListen(st => {
+      status.textContent = st === 'checking' ? 'Ag seiceáil… · Checking what you said' : st === 'hearing' ? 'Ag éisteacht… · Keep going, I’ll stop when you pause' : 'Ag éisteacht… · Listening. Say it now.';
+      if (st === 'checking') mic.classList.remove('on');
+    });
+    mic.classList.add('on'); mic.setAttribute('aria-pressed', 'true');
+    try {
+      const r = await L.promise;
+      mic.classList.remove('on'); mic.setAttribute('aria-pressed', 'false');
+      ta.value = r.text; lastConfidence = r.confidence;
+      status.textContent = 'Tap the mic and say it in Irish';
+      autoMic = false;
+      if (r.text.trim() && onFinal) onFinal(r.text.trim(), r.alts);
+    } catch(e){
+      mic.classList.remove('on'); mic.setAttribute('aria-pressed', 'false');
+      if (e.code !== 'cancelled') status.textContent = listenError(e);
+      autoMic = false;
+    }
+  }
   function toggle(){
+    if (azure) return toggleAzure();
     if (activeRec){ activeRec.stop(); return; }
     // Stop any audio so the mic doesn't hear Gráinne or the phrase recording.
     player.pause(); try { speechSynthesis.cancel(); } catch(e){}
@@ -1064,6 +1092,7 @@ function settingsView(){
   const keyIn = h('input', {type:'password', id:'key', autocomplete:'off', placeholder:'sk-ant-…', value:settings.key});
   const modelIn = h('select', {id:'model'}, ['claude-sonnet-5-5', 'claude-haiku-5-5'].map(m => h('option', {value:m, selected: settings.model === m ? true : null}, m === 'claude-sonnet-5-5' ? 'Claude Sonnet 5.5 (best Irish)' : 'Claude Haiku 5.5 (faster, cheaper)')));
   const langIn = h('select', {id:'lang'}, [['ga-IE', 'Irish (ga-IE)'], ['ga', 'Irish (ga)'], ['en-IE', 'English, Ireland (fallback)']].map(([v, t]) => h('option', {value:v, selected: settings.lang === v ? true : null}, t)));
+  const sttIn = h('select', {id:'stt'}, [['azure', 'Azure Irish (best, needs Azure key)'], ['chrome', 'The phone’s own recogniser']].map(([v, t]) => h('option', {value:v, selected: (settings.stt || 'azure') === v ? true : null}, t)));
   const autoIn = h('input', {type:'checkbox', id:'auto', checked: settings.autoSend ? true : null, style:'width:22px;height:22px'});
   const handsIn = h('input', {type:'checkbox', id:'hands', checked: settings.handsFree ? true : null, style:'width:22px;height:22px'});
   const saved = h('p', {class:'miclabel', role:'status'});
@@ -1072,12 +1101,14 @@ function settingsView(){
     h('div', {class:'field'}, h('label', {class:'lbl', for:'key'}, 'Claude API key'), keyIn,
       h('small', null, 'Stored only on this phone and sent only to Anthropic. Get one at ', h('a', {href:'https://console.anthropic.com/settings/keys', target:'_blank', rel:'noopener'}, 'console.anthropic.com'), '.')),
     h('div', {class:'field'}, h('label', {class:'lbl', for:'model'}, 'Model'), modelIn),
-    h('div', {class:'field'}, h('label', {class:'lbl', for:'lang'}, 'Speech recognition language'), langIn,
+    h('div', {class:'field'}, h('label', {class:'lbl', for:'stt'}, 'Speech recognition'), sttIn,
+      h('small', null, 'Azure uses a proper Irish model with your Azure key (set it below). The phone’s own recogniser often hears Irish as English.')),
+    h('div', {class:'field'}, h('label', {class:'lbl', for:'lang'}, 'Phone recogniser language'), langIn,
       h('small', null, 'If Irish isn’t recognised, try “Irish (ga)”.')),
     h('label', {class:'row', for:'auto', style:'align-items:center;font-weight:700'}, autoIn, 'Send chat replies as soon as I stop speaking'),
     h('label', {class:'row', for:'hands', style:'align-items:center;font-weight:700'}, handsIn, 'Hands-free chat: open the mic when she finishes speaking'),
     h('div', {class:'row'}, h('button', {type:'button', class:'btn primary grow', onclick:() => {
-      settings = {...settings, key:keyIn.value.trim(), model:modelIn.value, lang:langIn.value, autoSend:autoIn.checked, handsFree:handsIn.checked};
+      settings = {...settings, key:keyIn.value.trim(), model:modelIn.value, lang:langIn.value, stt:sttIn.value, autoSend:autoIn.checked, handsFree:handsIn.checked};
       saveSettings(); saved.textContent = 'Saved.';
     }}, 'Save')), saved));
 

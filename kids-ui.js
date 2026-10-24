@@ -8,6 +8,8 @@ const kidDialect = () => me().dialect || 'u';
 const kidSet = () => 'k-' + kidDialect();
 const kidTopic = id => window.KIDS.topics.find(t => t.id === id);
 const kt = x => window.kidText(x, kidDialect());
+// Can we listen to the child at all (Azure, or the phone's recogniser)?
+const kidCanHear = () => !!SR || useAzureSTT();
 function kidAudio(T, rel, text){ loadAudioIndex(kidSet()); return audioUrl(kidSet(), T.id + '/' + rel, text); }
 const wordAudio = (T, i) => kidAudio(T, (i + 1) + '.mp3', kt(T.words[i][1]));
 const sentAudio = (T, i) => kidAudio(T, (T.words.length + i + 1) + '.mp3', kt(T.sentences[i][0]));
@@ -99,7 +101,7 @@ function kidSay(T, host){
     h('button', {type:'button', class:'kid-pic', 'aria-label':'Hear: ' + word, onclick:() => kidPlay(url, host, word)}, w[0]),
     young ? null : h('p', {class:'kid-word', lang:'ga'}, word),
     h('p', {class:'kid-en'}, w[2]));
-  card.append(young || !SR ? kidRecorder(T, host, url) : kidMic(word, 0.3, host, T));
+  card.append(young || !kidCanHear() ? kidRecorder(T, host, url) : kidMic(word, 0.3, host, T));
   card.append(h('div', {class:'kid-row'},
     h('button', {type:'button', class:'kid-btn', onclick:() => kidPlay(url, host, word)}, '🔊 Éist'),
     h('button', {type:'button', class:'kid-btn go', onclick:kidNext}, 'Ar aghaidh ➜')));
@@ -119,7 +121,23 @@ function kidMic(expected, pass, host, T){
   const v = view, status = h('p', {class:'kid-status', role:'status'}, v.result === 'yes' ? '⭐ Maith thú!' : v.result === 'again' ? 'Arís! Have another go.' : 'Tap the mic and say it!');
   const btn = h('button', {type:'button', class:'kid-mic' + (v.result === 'yes' ? ' yes' : ''), 'aria-label':'Say it', onclick:() => {
     if (activeRec){ activeRec.stop(); return; }
+    if (window.activeListen){ activeListen.stop(); return; }
     player.pause();
+    const judge = heard => {
+      const ok = grade(expected, heard, true).score >= pass;
+      v.result = ok ? 'yes' : 'again';
+      if (ok){ progress.said = (progress.said || 0) + 1; saveProgress(); }
+      render();
+      const hostNow = document.querySelector('.kid-host .cast');
+      kidPlay(lineAudio(T, ok ? 'yes' : 'again'), hostNow, window.KIDS.lines[ok ? 'yes' : 'again']);
+    };
+    if (useAzureSTT()){
+      const L = azureListen(st => { status.textContent = st === 'checking' ? 'Hmm, let me think… 🤔' : 'Ag éisteacht… 👂'; });
+      btn.classList.add('on');
+      L.promise.then(r => { btn.classList.remove('on'); judge([r.text].concat(r.alts).join(' ')); })
+        .catch(e => { btn.classList.remove('on'); if (e.code !== 'cancelled') status.textContent = e.code === 'no-speech' ? 'I didn’t hear anything. Tap and try again!' : listenError(e); });
+      return;
+    }
     const r = new SR(); r.lang = settings.lang; r.interimResults = false; r.maxAlternatives = 3;
     let heard = '';
     r.onresult = e => { const alts = [...e.results[0]]; heard = alts.map(a => a.transcript).join(' '); };
@@ -194,7 +212,7 @@ function kidSentence(T, host){
   return h('section', {class:'kid-card'},
     h('p', {class:'kid-word', lang:'ga'}, ga), h('p', {class:'kid-en'}, s[1]),
     h('button', {type:'button', class:'kid-btn', onclick:() => kidPlay(url, host, ga)}, '🔊 Éist'),
-    SR ? kidMic(ga.replace(/…/g, ''), 0.7, host, T) : kidRecorder(T, host, url),
+    kidCanHear() ? kidMic(ga.replace(/…/g, ''), 0.7, host, T) : kidRecorder(T, host, url),
     h('button', {type:'button', class:'kid-btn go', onclick:kidNext}, 'Ar aghaidh ➜'));
 }
 function kidBuild(T, host){
@@ -202,7 +220,7 @@ function kidBuild(T, host){
   return h('section', {class:'kid-card'},
     h('p', {class:'kid-en'}, 'How do you say…'), h('p', {class:'kid-word'}, s[1]),
     v.result || v.reveal ? h('p', {class:'kid-word', lang:'ga'}, ga) : h('button', {type:'button', class:'kid-btn', onclick:() => { v.reveal = true; render(); }}, '💡 Help'),
-    SR ? kidMic(ga.replace(/…/g, ''), 0.7, host, T) : kidRecorder(T, host, url),
+    kidCanHear() ? kidMic(ga.replace(/…/g, ''), 0.7, host, T) : kidRecorder(T, host, url),
     h('button', {type:'button', class:'kid-btn go', onclick:() => { v.reveal = false; kidNext(); }}, 'Ar aghaidh ➜'));
 }
 // Scripted chat: the host says a line; tap a reply, hear it, then say it.
@@ -217,7 +235,7 @@ function kidChat(T, host){
       return h('button', {type:'button', class:'kid-reply' + (v.picked === j ? ' on' : ''), onclick:() => { v.picked = j; render(); kidPlay(rurl, null, text); }},
         h('strong', {lang:'ga'}, text), h('small', null, r[1]));
     })),
-    v.picked != null && SR ? kidMic(kt(step.replies[v.picked][0]).replace(/…/g, ''), 0.6, host, T) : null,
+    v.picked != null && kidCanHear() ? kidMic(kt(step.replies[v.picked][0]).replace(/…/g, ''), 0.6, host, T) : null,
     v.picked != null ? h('button', {type:'button', class:'kid-btn go', onclick:() => { v.picked = null; kidNext(); }}, 'Ar aghaidh ➜') : null);
 }
 
