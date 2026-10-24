@@ -87,6 +87,21 @@ function speak(text){
   speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
 
+// Pre-made phrase audio (ABAIR). audio/index.json maps "lessonId/n.mp3" to its text; n counts phrases, then drill answers.
+let audioIndex = null;
+fetch('audio/index.json').then(r => r.ok ? r.json() : null).then(j => { audioIndex = j; if (j && view.name === 'lesson' && !activeRec) render(); }).catch(() => {});
+function audioFor(L, n, text){
+  const rel = L.id + '/' + n + '.mp3';
+  return audioIndex && audioIndex.files && audioIndex.files[rel] === text ? 'audio/' + rel : null;
+}
+const player = new Audio();
+function playAudio(src){ try { speechSynthesis.cancel(); } catch(e){} player.src = src; player.currentTime = 0; player.play().catch(() => {}); }
+// A play button for a whole phrase: the ABAIR recording if we have one, else the phone's Irish voice, else nothing.
+function playBtn(src, text, props){
+  if (!src && !gaVoice) return null;
+  return h('button', {type:'button', 'aria-label':'Play: ' + text, ...props, onclick:() => src ? playAudio(src) : speak(text)}, icon(I.speaker, 16), 'Éist');
+}
+
 // The answer box: a text area plus a mic button that fills it with what you said.
 function answerBox(label, onFinal){
   const ta = h('textarea', {id:'answer', rows:'2', autocomplete:'off', autocapitalize:'sentences', spellcheck:'false', lang:'ga', placeholder: SR ? 'Tap the mic and speak, or type' : 'Type your answer'});
@@ -238,9 +253,9 @@ function doCheck(expected, text){
   if (view.check.score >= 0.85){ progress.said = (progress.said || 0) + 1; saveProgress(); }
   render();
 }
-function hearRow(P){
+function hearRow(P, src){
   return h('div', {class:'hear'}, 'Hear it:',
-    gaVoice ? h('button', {type:'button', onclick:() => speak(P[0])}, icon(I.speaker, 16), 'Éist') : null,
+    playBtn(src, P[0]),
     P[3].map(w => h('a', {href:'https://www.teanglann.ie/en/fuaim/' + encodeURIComponent(w.toLowerCase()), target:'_blank', rel:'noopener'}, icon(I.speaker, 16), w)));
 }
 function advance(listKey, score, last){
@@ -257,7 +272,7 @@ function sayStep(){
       h('span', {class:'counter'}, 'Frása ' + (v.idx + 1) + ' de ' + v.L.phrases.length)),
     h('div', null, h('p', {class:'phrase', lang:'ga'}, P[0]), h('p', {class:'en'}, P[1])),
     h('p', {class:'say'}, 'Sound it out: ', h('b', null, P[2])),
-    hearRow(P),
+    hearRow(P, audioFor(v.L, v.idx + 1, P[0])),
     v.check ? null : answerBox('Now say it', text => doCheck(P[0], text)),
     resultBlock(v.check),
     h('div', {class:'row'}, v.check
@@ -274,7 +289,7 @@ function buildStep(){
       h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Tóg é · Build it'),
       h('span', {class:'counter'}, (v.idx + 1) + ' de ' + v.L.drills.length)),
     h('div', null, h('p', {class:'en', style:'font-size:14px'}, 'How would you say…'), h('p', {class:'phrase'}, D[0])),
-    v.reveal || v.check ? h('p', {class:'reveal'}, 'Answer: ', h('b', {lang:'ga'}, D[1]), gaVoice ? h('button', {type:'button', class:'btn', style:'min-height:36px;margin-left:8px', onclick:() => speak(D[1])}, 'Éist') : null)
+    v.reveal || v.check ? h('p', {class:'reveal'}, 'Answer: ', h('b', {lang:'ga'}, D[1]), playBtn(audioFor(v.L, v.L.phrases.length + v.idx + 1, D[1]), D[1], {class:'btn', style:'min-height:36px;margin-left:8px'}))
       : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { v.reveal = true; render(); }}, 'Show me the answer'),
     v.check ? null : answerBox('Say it in Irish', text => doCheck(D[1], text)),
     resultBlock(v.check),
@@ -442,6 +457,13 @@ function settingsView(){
     answerBox('What your phone heard', runTest),
     testOut,
     h('p', {class:'legend'}, 'Voice for Gráinne: ' + (gaVoice ? gaVoice.name + ' (Irish)' : 'no Irish voice on this phone, so use the teanglann.ie links'))));
+
+  // ABAIR credit (their terms require the wording and logo)
+  frag.append(h('section', {class:'card credit', 'aria-label':'Credits'},
+    h('img', {src:'icons/abair-logo.svg', alt:'ABAIR', width:'72', height:'55'}),
+    h('div', null,
+      h('p', {lang:'ga'}, 'Úsáidtear teicneolaíocht urlabhra agus teanga ABAIR sa tionscadal seo. Tá tuilleadh eolais ar shuíomh ', h('a', {href:'https://abair.ie', target:'_blank', rel:'noopener'}, 'abair.ie'), '.'),
+      h('small', null, 'Phrase audio: ABAIR speech technology, Trinity College Dublin.'))));
 
   // Claude key and model
   const keyIn = h('input', {type:'password', id:'key', autocomplete:'off', placeholder:'sk-ant-…', value:settings.key});
