@@ -28,3 +28,33 @@ Everything in the course was written for Ulster (Donegal) Irish in Caighdeán sp
 | u6-l2 | Cé leis a bhfuil tú? | Used for "who do you support?". |
 | u6-l4 | Ní thig liom canadh! | "canadh" vs "amhránaíocht" for singing. |
 | u6-l5 | Ar mhaith leat rud éigin a dhéanamh an deireadh seachtaine seo chugainn? | Phrasing. |
+
+## Connacht and Munster (content-c.js, content-m.js)
+Everything in these two files is my best effort and wants a check by a speaker of that dialect. In particular:
+| Where | Line | What to check |
+|---|---|---|
+| c u1-l3 | Cé as thú? | Conamara form. |
+| m u1-l3 | Cad as duit? / Tá cónaí orm in Aontroim. | Corca Dhuibhne forms. |
+| m u1-l2 | Is deas bualadh leat. | For "pleased to meet you". |
+| c/m u4-l2 | Tá sé ceathrú chun a sé. / Táim déanach! / Tá mé deireanach! | Time words. |
+| c/m u6-l4 | Ní féidir liom damhsa! | Natural, or "damhsa a dhéanamh"? |
+| m u6-l5 | Cad mar gheall ar Dé Sathairn? | "Dé Sathairn" after "mar gheall ar". |
+| c/m u5-l2 | Prices in euro. | Kept the Ulster course in pounds. |
+
+## Kid mode (kids.js)
+| Line | What to check |
+|---|---|
+| Mar a Mhothaím (topic title) | For "Feelings". |
+| crosta | For "cross" (angry), suited to kids. |
+| Codail! / Damhsaigh! | Imperatives for kids. |
+| Téimid chun na trá. / Tá an míol mór mór! | Phrasing. |
+| glas | For green (rather than uaine). |
+
+## Scenes and stories (scenes.js, stories.js)
+| Line | What to check |
+|---|---|
+| Cluiche iontach a bhí ann inné. | Word order. |
+| Deir siad “Dia is Muire duit!” liom. | For "they say hello back to me". |
+| Téim go dtí an caife gach Satharn. | "go dtí an caife" rather than "chuig an gcaife". |
+| Tá a theaghlach ar fad ann. | For "his whole family is there". |
+| Dia duit, a Phuifín! / a Bhroic! / a Ghiorria! | Vocatives of the kids' characters. |

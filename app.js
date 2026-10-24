@@ -172,7 +172,7 @@ const hashStr = s => { let x = 5381; for (const ch of s) x = ((x * 33) ^ ch.code
 function loadAudioIndex(set){
   if (set in audioIndexes) return audioIndexes[set];
   audioIndexes[set] = fetch(audioBase(set) + 'index.json').then(r => r.ok ? r.json() : null).catch(() => null)
-    .then(j => { audioIndexes[set] = j; if (j && !activeRec && !recorder && (view.name === 'lesson' || view.name === 'review' || view.name === 'kid')) render(); return j; });
+    .then(j => { audioIndexes[set] = j; if (j && !activeRec && !recorder && ['lesson', 'review', 'kid', 'story', 'together'].includes(view.name)) render(); return j; });
   return null;
 }
 function audioUrl(set, rel, text){
@@ -190,7 +190,12 @@ function audioFor(L, n, text, set){
 async function warmAudio(){
   if (!('caches' in window)) return;
   const sets = new Set();
-  for (const p of profiles.list) sets.add(p.kind === 'kid' ? 'k-' + (p.dialect || 'u') : (p.dialect || 'u'));
+  // Each person's course (or kids') audio, plus the scenes and stories in their dialect.
+  for (const p of profiles.list){
+    const d = p.dialect || 'u';
+    if (p.kind === 'kid') sets.add('k-' + d); else { sets.add(d); sets.add('st-' + d); }
+    sets.add('sc-' + d);
+  }
   const cache = await caches.open(AUDIO_CACHE), want = new Set();
   let complete = true;
   for (const set of sets){
