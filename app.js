@@ -91,7 +91,10 @@ function markDone(id){
   bumpStreak(); saveProgress();
 }
 const currentStreak = () => (progress.lastDay === today() || progress.lastDay === yesterday()) ? progress.streak : 0;
-const allLessons = () => window.UNITS.flatMap(u => u.lessons.map(l => ({...l, unit:u})));
+// The course in this person's dialect (course.js applies the Connacht/Munster overrides).
+const course = () => window.courseFor(me().dialect);
+const tutor = () => window.tutorFor(me().dialect);
+const allLessons = () => course().flatMap(u => u.lessons.map(l => ({...l, unit:u})));
 
 /* ---------- Review: a score per phrase, keyed on its Irish text ---------- */
 // Leitner boxes: a pass moves an item up a box and pushes it further out; a miss sends it back to box 0, due today.
@@ -152,13 +155,51 @@ function speak(text){
   speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
 
-// Pre-made phrase audio (ABAIR). audio/index.json maps "lessonId/n.mp3" to its text; n counts phrases, then drill answers.
-let audioIndex = null;
-fetch('audio/index.json').then(r => r.ok ? r.json() : null).then(j => { audioIndex = j; if (j && view.name === 'lesson' && !activeRec) render(); }).catch(() => {});
-function audioFor(L, n, text){
-  const rel = L.id + '/' + n + '.mp3';
-  return audioIndex && audioIndex.files && audioIndex.files[rel] === text ? 'audio/' + rel : null;
+// Pre-made audio (ABAIR), in sets: 'u' (Ulster, audio/), 'c' and 'm' (audio/c/, audio/m/), and kids' sets 'k-u', 'k-c', 'k-m'.
+// Each set's index.json maps "<id>/<n>.mp3" to its text (n counts phrases, then drill answers), with a voice per set or per file.
+// URLs carry ?h=<hash of text and voice>, so a regenerated file gets a new URL and the long-lived audio cache never serves a stale one.
+const AUDIO_CACHE = 'labhair-audio';
+const audioIndexes = {};
+const audioBase = set => set === 'u' ? 'audio/' : 'audio/' + set + '/';
+const hashStr = s => { let x = 5381; for (const ch of s) x = ((x * 33) ^ ch.codePointAt(0)) >>> 0; return x.toString(36); };
+function loadAudioIndex(set){
+  if (set in audioIndexes) return audioIndexes[set];
+  audioIndexes[set] = fetch(audioBase(set) + 'index.json').then(r => r.ok ? r.json() : null).catch(() => null)
+    .then(j => { audioIndexes[set] = j; if (j && !activeRec && !recorder && (view.name === 'lesson' || view.name === 'review' || view.name === 'kid')) render(); return j; });
+  return null;
 }
+function audioUrl(set, rel, text){
+  const ix = audioIndexes[set];
+  if (!ix || typeof ix.then === 'function' || !ix.files || ix.files[rel] !== text) return null;
+  const voice = (ix.voices && ix.voices[rel]) || ix.voice || '';
+  return audioBase(set) + rel + '?h=' + hashStr(text + '|' + voice);
+}
+function audioFor(L, n, text, set){
+  set = set || me().dialect || 'u';
+  loadAudioIndex(set);
+  return audioUrl(set, L.id + '/' + n + '.mp3', text);
+}
+// Download every clip for the sets this phone's people use, so lessons work offline. Only missing files are fetched.
+async function warmAudio(){
+  if (!('caches' in window)) return;
+  const sets = new Set();
+  for (const p of profiles.list) sets.add(p.kind === 'kid' ? 'k-' + (p.dialect || 'u') : (p.dialect || 'u'));
+  const cache = await caches.open(AUDIO_CACHE), want = new Set();
+  let complete = true;
+  for (const set of sets){
+    loadAudioIndex(set);
+    const ix = await audioIndexes[set];
+    if (!ix || !ix.files){ complete = false; continue; }
+    for (const [rel, text] of Object.entries(ix.files)){
+      const url = new URL(audioUrl(set, rel, text), location.href).href;
+      want.add(url);
+      if (!(await cache.match(url))) { try { await cache.add(url); } catch(e){} }
+    }
+  }
+  // Tidy away clips no one here needs any more (only when every index loaded, so offline never deletes anything).
+  if (complete) for (const req of await cache.keys()) if (!want.has(req.url)) await cache.delete(req);
+}
+const warmSoon = () => setTimeout(() => warmAudio().catch(() => {}), 3000);
 const player = new Audio();
 function playAudio(src){ try { speechSynthesis.cancel(); } catch(e){} player.onended = null; player.src = src; player.currentTime = 0; player.play().catch(() => {}); }
 // Play several clips one after another (native, then my take).
@@ -353,7 +394,7 @@ function homeView(){
       h('div', {class:'stat'}, h('b', null, progress.said || 0), h('span', null, 'frásaí · phrases said')),
       h('div', {class:'stat'}, h('b', null, doneCount + '/' + ls.length), h('span', null, 'ceachtanna · lessons')))
   );
-  if (!settings.key) frag.append(h('p', {class:'note'}, h('strong', null, 'One-time setup: '), 'add your Claude API key in Settings so you can chat with Gráinne. Lessons work without it.'));
+  if (!settings.key) frag.append(h('p', {class:'note'}, h('strong', null, 'One-time setup: '), 'add your Claude API key in Settings so you can chat with ' + tutor().name + '. Lessons work without it.'));
   const learned = learnedItems();
   if (learned.length){
     const due = learned.filter(isDue).length, doneToday = progress.lastReview === today();
@@ -364,7 +405,7 @@ function homeView(){
         h('p', {class:'en', style:'font-size:14px'}, doneToday ? 'Come back tomorrow, or practise a few more now.' : due ? Math.min(due, REVIEW_SIZE) + ' phrases due · about 3 minutes' : 'Nothing due. Practise anyway?')),
       h('button', {type:'button', class:'btn ' + (doneToday || !due ? '' : 'primary'), onclick:openReview}, doneToday || !due ? 'Practise more' : 'Tosaigh · Start')));
   }
-  for (const U of window.UNITS){
+  for (const U of course()){
     const done = U.lessons.filter(l => progress.done[l.id]).length;
     frag.append(
       h('section', {class:'unit', 'aria-label':'Unit ' + U.num},
@@ -535,7 +576,7 @@ function profileForm(p){
     const out = {...p, name, kind:kindIn.value, band: kindIn.value === 'kid' ? bandIn.value : '', dialect:dialIn.value};
     if (isNew){ out.id = 'p' + Date.now().toString(36); profiles.list.push(out); }
     else profiles.list = profiles.list.map(x => x.id === out.id ? out : x);
-    saveProfiles();
+    saveProfiles(); warmSoon();
     if (out.id === profiles.current) progress = loadProgress(out.id);
     v.edit = null; render();
   };
@@ -637,13 +678,13 @@ function allowedPhrases(L){
   return all.slice(0, upto).flatMap(x => x.phrases.map(p => p[0]).concat(x.drills.map(d => d[1])));
 }
 function rulesFor(L){
-  const me = learner();
-  return 'You are Gráinne, a warm, chatty woman from Gaoth Dobhair in Co. Donegal. You are helping ' + me.ga + ' (' + me.en + '), an adult beginner, practise speaking Ulster Irish in a short role-play.\n' +
+  const me = learner(), T = tutor();
+  return 'You are ' + T.name + ', a warm, chatty woman from ' + T.place + ' in ' + T.county + '. You are helping ' + me.ga + ' (' + me.en + '), an adult beginner, practise speaking ' + T.dialect + ' in a short role-play.\n' +
     'Scene: ' + L.chat.scene + '\n' +
     'Their goals: ' + L.chat.goals.map(g => g[0] + ' = ' + g[1]).join('; ') + '\n' +
     'Phrases they have learned so far: ' + allowedPhrases(L).join(' | ') + '\n' +
     'Rules:\n' +
-    '- Speak only Ulster Irish in standard spelling (e.g. "Cad é mar atá tú?", "Tá mé", "An dtig leat"). Use mostly the phrases above, plus at most one new simple word per turn.\n' +
+    '- Speak only ' + T.dialect + ' in standard spelling (e.g. ' + T.examples + '). Use mostly the phrases above, plus at most one new simple word per turn.\n' +
     '- Keep each reply to one or two short sentences. Steer the chat so they get a natural chance at each goal.\n' +
     '- Their text comes from speech recognition, which often mishears Irish. Judge what they most likely SAID. Ignore capitals, punctuation and spelling slips a listener would not hear; only recast real grammar or word mistakes.\n' +
     '- If their Irish has a mistake, put the corrected version of what they meant in "recast" and a short, friendly English tip in "note". Otherwise leave both as "".\n' +
@@ -667,11 +708,11 @@ function talkStep(){
     else list.append(h('div', {class:'msg me'}, h('div', {class:'bubble', lang:'ga'}, m.text),
       m.recast ? h('div', {class:'fix'}, h('b', {lang:'ga'}, 'Níos fearr: ' + m.recast), m.note ? h('div', null, m.note) : null) : null));
   }
-  if (c.busy) list.append(h('p', {class:'typing'}, 'Gráinne is replying…'));
+  if (c.busy) list.append(h('p', {class:'typing'}, tutor().name + ' is replying…'));
   wrap.append(list);
   if (c.error) wrap.append(h('p', {class:'err'}, c.error));
   if (!settings.key){
-    wrap.append(h('p', {class:'note'}, 'Chatting with Gráinne needs your Claude API key. ', h('button', {type:'button', class:'btn', style:'margin-top:8px', onclick:() => { view = {name:'settings', back:v}; render(); }}, 'Open Settings')));
+    wrap.append(h('p', {class:'note'}, 'Chatting with ' + tutor().name + ' needs your Claude API key. ', h('button', {type:'button', class:'btn', style:'margin-top:8px', onclick:() => { view = {name:'settings', back:v}; render(); }}, 'Open Settings')));
   } else if (!c.done){
     wrap.append(h('section', {class:'card'},
       answerBox('Your reply in Irish', settings.autoSend ? () => sendChat() : null),
@@ -719,8 +760,8 @@ async function evaluate(){
   const v = view, c = v.chat, L = v.L;
   if (!settings.key || !c.msgs.some(m => m.who === 'me')){ v.review = {skipped:true}; render(); return; }
   v.review = {loading:true}; render();
-  const transcript = c.msgs.map(m => m.who === 'g' ? 'Gráinne: ' + m.ga : learner().ga + ': ' + m.text).join('\n');
-  const system = 'You are an encouraging Ulster Irish tutor. The learner’s lines came from speech recognition, so judge what they most likely said.';
+  const transcript = c.msgs.map(m => m.who === 'g' ? tutor().name + ': ' + m.ga : learner().ga + ': ' + m.text).join('\n');
+  const system = 'You are an encouraging ' + tutor().dialect + ' tutor. The learner’s lines came from speech recognition, so judge what they most likely said.';
   const prompt = 'Goals: ' + L.chat.goals.map(g => g[1]).join('; ') + '\n\nTranscript:\n' + transcript +
     '\n\nReply with ONLY JSON: {"wellDone": ["two short specific things they did well"], "practise": ["two short specific things to practise, each with the correct Irish"], "score": 0-' + L.chat.goals.length + ' (one point per goal clearly achieved)}';
   try {
@@ -752,7 +793,7 @@ function reviewStep(){
     h('ul', {class:'plain'}, fixes.slice(0, 4).map(m => h('li', null, h('span', {lang:'ga'}, m.text), ' → ', h('b', {lang:'ga'}, m.recast))))));
   if (L.checkpoint){
     const r = v.review;
-    if (r && r.loading) wrap.append(h('p', {class:'typing'}, 'Gráinne is writing your feedback…'));
+    if (r && r.loading) wrap.append(h('p', {class:'typing'}, tutor().name + ' is writing your feedback…'));
     else if (r && (r.wellDone || r.practise)) wrap.append(h('section', {class:'card'},
       h('span', {class:'eyebrow', style:'color:var(--green-text)'}, 'Rinne tú go maith · You did well'),
       h('ul', {class:'plain'}, r.wellDone.map(x => h('li', null, x))),
@@ -893,3 +934,4 @@ function settingsView(){
 /* ---------- Start ---------- */
 render();
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+warmSoon();
