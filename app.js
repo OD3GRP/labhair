@@ -231,7 +231,7 @@ const hashStr = s => { let x = 5381; for (const ch of s) x = ((x * 33) ^ ch.code
 function loadAudioIndex(set){
   if (set in audioIndexes) return audioIndexes[set];
   audioIndexes[set] = fetch(audioBase(set) + 'index.json').then(r => r.ok ? r.json() : null).catch(() => null)
-    .then(j => { audioIndexes[set] = j; if (j && !activeRec && !recorder && ['lesson', 'review', 'kid', 'story', 'together'].includes(view.name)) render(); return j; });
+    .then(j => { audioIndexes[set] = j; if (j && !activeRec && !recorder && !window.activeListen && ['lesson', 'review', 'kid', 'story', 'together'].includes(view.name)) render(); return j; });
   return null;
 }
 function audioUrl(set, rel, text){
@@ -371,7 +371,8 @@ function answerBox(label, onFinal){
   }
   // Azure: record, let it find the end of your speech, then send it off. Tap again to finish early.
   async function toggleAzure(){
-    if (window.activeListen){ activeListen.stop(); return; }
+    if (window.activeListen){ micLog('azure: tapped to finish'); activeListen.stop(); return; }
+    micLog('mic tapped', {engine:'azure', view:view.name, version:document.body.dataset.version || ''});
     player.pause(); try { speechSynthesis.cancel(); } catch(e){}
     stopRec(false);
     const L = azureListen(st => {
@@ -383,6 +384,7 @@ function answerBox(label, onFinal){
       const r = await L.promise;
       mic.classList.remove('on'); mic.setAttribute('aria-pressed', 'false');
       ta.value = r.text; lastConfidence = r.confidence;
+      micLog('azure: heard', {text:r.text, conf:r.confidence, alts:r.alts.length});
       status.textContent = 'Tap the mic and say it in Irish';
       autoMic = false;
       if (r.text.trim() && onFinal) onFinal(r.text.trim(), r.alts);
@@ -399,6 +401,7 @@ function answerBox(label, onFinal){
     player.pause(); try { speechSynthesis.cancel(); } catch(e){}
     stopRec(false);
     let finalText = '', failed = false;
+    micLog('mic tapped', {engine:'chrome', lang:settings.lang, view:view.name, azureKey:hasAzure(), stt:settings.stt || 'azure'});
     const r = new SR();
     r.lang = settings.lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 5;
     let alts = [];
@@ -413,10 +416,11 @@ function answerBox(label, onFinal){
         alts = [...last].map(a => before + a.transcript);
       }
     };
-    r.onerror = e => { failed = true; status.textContent = autoMic && e.error === 'not-allowed' ? 'Your turn: tap the mic to reply.' : micError(e.error); autoMic = false; };
+    r.onerror = e => { failed = true; micLog('chrome: error', {error:e.error, message:e.message}); status.textContent = autoMic && e.error === 'not-allowed' ? 'Your turn: tap the mic to reply.' : micError(e.error); autoMic = false; };
     r.onend = () => {
       activeRec = null; mic.classList.remove('on'); mic.setAttribute('aria-pressed', 'false');
       if (!failed) status.textContent = 'Tap the mic and say it in Irish';
+      micLog('chrome: ended', {heard:finalText, failed, conf:lastConfidence});
       if (!failed && finalText.trim() && onFinal) onFinal(finalText.trim(), alts);
     };
     try { r.start(); activeRec = r; mic.classList.add('on'); mic.setAttribute('aria-pressed', 'true'); status.textContent = 'Ag éisteacht… · Listening. Tap again to stop.'; }
@@ -646,6 +650,7 @@ function doCheck(expected, text, alts){
   view.noted = view.noted || {};
   if (!view.noted[expected]){ view.noted[expected] = view.check.score; noteItem(expected, view.check.score); }
   noteWeak(view.check);
+  if (window.micLog) micLog('graded', {expected, said:view.check.said, score:Math.round(view.check.score * 100), english:!!view.check.english});
   // The talk-back coach (advisor.js) explains the result, and says it aloud if that's switched on.
   view.coach = window.coachFor && settings.coach !== false ? coachFor(expected, view.check, view) : null;
   render();
@@ -1085,7 +1090,7 @@ function settingsView(){
       h('p', {lang:'ga'}, 'Úsáidtear teicneolaíocht urlabhra agus teanga ABAIR sa tionscadal seo. Tá tuilleadh eolais ar shuíomh ', h('a', {href:'https://abair.ie', target:'_blank', rel:'noopener'}, 'abair.ie'), '.'),
       h('small', null, 'Phrase audio: ABAIR speech technology, Trinity College Dublin.'))));
   const ver = h('p', {class:'legend', style:'text-align:center'}, 'Labhair');
-  if ('caches' in window) caches.keys().then(k => { const v = k.filter(x => /^labhair-vd+$/.test(x)).sort().pop(); if (v) ver.textContent = 'Labhair ' + v.replace('labhair-', ''); }).catch(() => {});
+  if ('caches' in window) caches.keys().then(k => { const v = k.filter(x => /^labhair-v\d+$/.test(x)).sort((a, b) => parseInt(a.slice(9)) - parseInt(b.slice(9))).pop(); if (v){ ver.textContent = 'Labhair ' + v.replace('labhair-', ''); document.body.dataset.version = v; } }).catch(() => {});
   frag.append(ver);
 
   // Claude key and model
@@ -1111,6 +1116,40 @@ function settingsView(){
       settings = {...settings, key:keyIn.value.trim(), model:modelIn.value, lang:langIn.value, stt:sttIn.value, autoSend:autoIn.checked, handsFree:handsIn.checked};
       saveSettings(); saved.textContent = 'Saved.';
     }}, 'Save')), saved));
+
+  // Mic check: a live level meter, a test with whichever recogniser is in use, and the log to copy for troubleshooting
+  if (window.azureListen){
+    const meter = h('i'), bar = h('div', {class:'meter', 'aria-hidden':'true'}, meter);
+    const result = h('p', {class:'miclabel', role:'status'});
+    const logBox = h('pre', {class:'miclog'});
+    const showLog = () => { let log = []; try { log = JSON.parse(localStorage.getItem('labhair-miclog') || '[]'); } catch(e){} logBox.textContent = log.length ? log.map(x => JSON.stringify(x)).join('\n') : 'Nothing logged yet. Try the mic in a lesson, or tap Test below.'; };
+    const facts = () => ({version:document.body.dataset.version || '', engine: useAzureSTT() ? 'azure' : (SR ? 'chrome' : 'none'), azureKey:hasAzure(), region:settings.azureRegion || '', stt:settings.stt || 'azure', chromeSR:!!SR, lang:settings.lang, ua:navigator.userAgent.slice(0, 90)});
+    showLog();
+    frag.append(h('section', {class:'card', 'aria-label':'Mic check'},
+      h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Mic check · troubleshooting'),
+      h('p', {class:'en', style:'font-size:14px'}, 'Tap Test, say “Dia duit, cad é mar atá tú?”, then pause. The bar should jump when you speak.'),
+      bar,
+      h('div', {class:'row'},
+        h('button', {type:'button', class:'btn primary', onclick:async e => {
+          const btn = e.currentTarget;
+          if (window.activeListen){ activeListen.stop(); return; }
+          micLog('mic check started', facts());
+          window.onMicLevel = rms => { meter.style.width = Math.min(100, Math.round(rms * 600)) + '%'; };
+          if (!useAzureSTT()){ result.textContent = 'Azure isn’t in use (' + (hasAzure() ? 'Settings says use the phone’s recogniser' : 'no Azure key and region saved') + '). Use the Mic test above for the phone’s recogniser.'; window.onMicLevel = null; showLog(); return; }
+          btn.textContent = 'Stop';
+          const L = azureListen(st => { result.textContent = st === 'checking' ? 'Sending to Azure…' : st === 'hearing' ? 'Hearing you…' : 'Listening… speak now'; });
+          try { const r = await L.promise; result.textContent = 'Azure heard: “' + r.text + '” (confidence ' + Math.round(r.confidence * 100) + '%)'; }
+          catch(err){ result.textContent = err.code === 'cancelled' ? 'Stopped.' : listenError(err) + ' [' + err.code + (err.status ? ' ' + err.status : '') + ']'; }
+          window.onMicLevel = null; meter.style.width = '0'; btn.textContent = 'Test'; showLog();
+        }}, '🎙️ Test'),
+        h('button', {type:'button', class:'btn', onclick:async () => {
+          const text = 'Labhair mic log\n' + JSON.stringify(facts()) + '\n' + logBox.textContent;
+          try { await navigator.clipboard.writeText(text); result.textContent = 'Copied. Paste it into your chat with Claude.'; }
+          catch(e){ result.textContent = 'Couldn’t copy automatically: press and hold the log below to select it.'; }
+        }}, '📋 Copy log'),
+        h('button', {type:'button', class:'btn', onclick:() => { localStorage.removeItem('labhair-miclog'); showLog(); result.textContent = 'Log cleared.'; }}, 'Clear')),
+      result, logBox));
+  }
 
   // An Spideog and the coach: each part can be switched off
   const tog = (id, key, label) => {

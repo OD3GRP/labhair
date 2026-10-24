@@ -1,5 +1,5 @@
 // Offline cache for Labhair. Bump VERSION whenever you change any app file so phones pick up the update.
-const VERSION = 'labhair-v19';
+const VERSION = 'labhair-v20';
 // Audio lives in its own long-lived cache (filled by the page, see warmAudio in app.js), so updates don't re-download it.
 const AUDIO_CACHE = 'labhair-audio';
 const FILES = ['./', './index.html', './styles.css', './app.js', './content.js', './content-c.js', './content-m.js', './course.js', './kids.js', './cast.js', './kids-ui.js', './commute.js', './listen.js', './advisor.js', './scenes.js', './scenes-ui.js', './stories.js', './family.js', './art/index.json',
