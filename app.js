@@ -14,6 +14,11 @@ function h(tag, props, ...kids){
   for (const k of kids.flat()){ if (k == null || k === false) continue; el.append(k.nodeType ? k : document.createTextNode(String(k))); }
   return el;
 }
+// Append children the way h() does: arrays flattened, null/false skipped.
+function put(el, ...kids){
+  for (const k of kids.flat()){ if (k == null || k === false) continue; el.append(k.nodeType ? k : document.createTextNode(String(k))); }
+  return el;
+}
 function icon(d, size = 20){
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   for (const [k, v] of Object.entries({width:size, height:size, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', 'stroke-width':'2.4', 'stroke-linecap':'round', 'stroke-linejoin':'round', 'aria-hidden':'true'})) s.setAttribute(k, v);
@@ -55,14 +60,52 @@ let settings = {...DEFAULT_SETTINGS, ...store.get('labhair-settings', {})};
 const saveSettings = () => store.set('labhair-settings', settings);
 let progress = {done:{}, streak:0, lastDay:'', said:0, ...store.get('labhair-progress', {})};
 const saveProgress = () => store.set('labhair-progress', progress);
-function markDone(id){
-  progress.done = {...progress.done, [id]: true};
+function bumpStreak(){
   const t = today();
   if (progress.lastDay !== t){ progress.streak = progress.lastDay === yesterday() ? progress.streak + 1 : 1; progress.lastDay = t; }
-  saveProgress();
+}
+function markDone(id){
+  progress.done = {...progress.done, [id]: true};
+  bumpStreak(); saveProgress();
 }
 const currentStreak = () => (progress.lastDay === today() || progress.lastDay === yesterday()) ? progress.streak : 0;
 const allLessons = () => window.UNITS.flatMap(u => u.lessons.map(l => ({...l, unit:u})));
+
+/* ---------- Review: a score per phrase, keyed on its Irish text ---------- */
+// Leitner boxes: a pass moves an item up a box and pushes it further out; a miss sends it back to box 0, due today.
+const INTERVALS = [0, 1, 3, 7, 14, 30]; // days until due again, by box
+const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return ymd(d); };
+const itemStats = () => progress.items || (progress.items = {});
+function noteItem(ga, score){
+  const s = itemStats()[ga] || {box:0, due:today()};
+  if (score >= 0.85){ s.box = Math.min(s.box + 1, INTERVALS.length - 1); s.due = addDays(INTERVALS[s.box]); }
+  else { s.box = 0; s.due = today(); }
+  s.last = score; itemStats()[ga] = s; saveProgress();
+}
+// Every phrase and drill answer from lessons you've finished. n matches the audio file numbering.
+function learnedItems(){
+  const seen = new Set(), out = [];
+  for (const L of allLessons()){
+    if (L.checkpoint || !progress.done[L.id]) continue;
+    const add = (ga, en, sound, n) => { if (!seen.has(ga)){ seen.add(ga); out.push({ga, en, sound, L, n}); } };
+    L.phrases.forEach((p, i) => add(p[0], p[1], p[2], i + 1));
+    L.drills.forEach((d, j) => add(d[1], d[0], '', L.phrases.length + j + 1));
+  }
+  return out;
+}
+const isDue = it => { const s = itemStats()[it.ga]; return !s || s.due <= today(); };
+// Today's set: due items first (lowest box, then worst last score), topped up with the least-practised others.
+const REVIEW_SIZE = 10;
+function pickReview(){
+  const rank = it => { const s = itemStats()[it.ga] || {box:0, last:0}; return s.box * 10 + (s.last || 0); };
+  const all = learnedItems();
+  const due = all.filter(isDue).sort((a, b) => rank(a) - rank(b));
+  const rest = all.filter(it => !isDue(it)).sort((a, b) => rank(a) - rank(b));
+  const pick = due.concat(rest).slice(0, REVIEW_SIZE);
+  for (let i = pick.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [pick[i], pick[j]] = [pick[j], pick[i]]; }
+  // New or shaky items: hear and repeat. Items you know: build from the English.
+  return pick.map(it => ({...it, mode: ((itemStats()[it.ga] || {}).box || 0) >= 2 ? 'build' : 'say'}));
+}
 
 /* ---------- Speech: recognition (mic) and Irish voice if the phone has one ---------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -257,7 +300,7 @@ function claudeErrorText(e){
 
 /* ---------- Views ---------- */
 let view = {name:'home'};
-function render(){ stopMic(); stopRec(false); $app.replaceChildren(view.name === 'home' ? homeView() : view.name === 'settings' ? settingsView() : lessonView()); }
+function render(){ stopMic(); stopRec(false); $app.replaceChildren(view.name === 'home' ? homeView() : view.name === 'settings' ? settingsView() : view.name === 'review' ? reviewView() : lessonView()); }
 function goHome(){ if (view.chat && view.chat.ctl) view.chat.ctl.abort(); dropTakes(); view = {name:'home'}; render(); window.scrollTo(0, 0); }
 
 function homeView(){
@@ -276,6 +319,16 @@ function homeView(){
       h('div', {class:'stat'}, h('b', null, doneCount + '/' + ls.length), h('span', null, 'ceachtanna · lessons')))
   );
   if (!settings.key) frag.append(h('p', {class:'note'}, h('strong', null, 'One-time setup: '), 'add your Claude API key in Settings so you can chat with Gráinne. Lessons work without it.'));
+  const learned = learnedItems();
+  if (learned.length){
+    const due = learned.filter(isDue).length, doneToday = progress.lastReview === today();
+    frag.append(h('section', {class:'review-card', 'aria-label':'Daily review'},
+      h('div', null,
+        h('span', {class:'eyebrow', style:'color:var(--gorse-text)'}, 'Athbhreithniú laethúil · Daily review'),
+        h('p', {class:'rc-main'}, doneToday ? 'Déanta inniu ✓ · Done for today' : due ? due + ' frása le hathbhreithniú' : 'Níl aon rud le déanamh'),
+        h('p', {class:'en', style:'font-size:14px'}, doneToday ? 'Come back tomorrow, or practise a few more now.' : due ? Math.min(due, REVIEW_SIZE) + ' phrases due · about 3 minutes' : 'Nothing due. Practise anyway?')),
+      h('button', {type:'button', class:'btn ' + (doneToday || !due ? '' : 'primary'), onclick:openReview}, doneToday || !due ? 'Practise more' : 'Tosaigh · Start')));
+  }
   for (const U of window.UNITS){
     const done = U.lessons.filter(l => progress.done[l.id]).length;
     frag.append(
@@ -338,6 +391,9 @@ function doCheck(expected, text){
   if (!said) return;
   view.check = grade(expected, said);
   if (view.check.score >= 0.85){ progress.said = (progress.said || 0) + 1; saveProgress(); }
+  // Only the first try at each item counts towards review scheduling.
+  view.noted = view.noted || {};
+  if (!view.noted[expected]){ view.noted[expected] = view.check.score; noteItem(expected, view.check.score); }
   render();
 }
 function hearRow(P, src){
@@ -390,6 +446,78 @@ function buildStep(){
       ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
          h('button', {type:'button', class:'btn primary grow', onclick:() => advance('drills', v.check.score, last)}, last ? 'On to Comhrá' : 'Next')]
       : [h('button', {type:'button', class:'btn primary grow', onclick:() => doCheck(D[1])}, 'Check')]));
+}
+
+/* ---------- Athbhreithniú: daily review ---------- */
+function openReview(){
+  const items = pickReview();
+  if (!items.length) return;
+  dropTakes();
+  view = {name:'review', items, idx:0, check:null, reveal:false, noted:{}, takes:{}, retried:{}, done:false};
+  render(); window.scrollTo(0, 0);
+}
+function reviewNext(){
+  const v = view, it = v.items[v.idx];
+  const first = it.ga in v.noted ? v.noted[it.ga] : 0;
+  if (!(it.ga in v.noted)){ v.noted[it.ga] = 0; noteItem(it.ga, 0); } // skipped counts as a miss
+  // A miss comes back once at the end, as hear-and-repeat.
+  if (first < 0.85 && !v.retried[it.ga]){ v.retried[it.ga] = true; v.items.push({...it, mode:'say', retry:true}); }
+  v.check = null; v.reveal = false; v.idx++;
+  if (v.idx >= v.items.length){ v.done = true; progress.lastReview = today(); bumpStreak(); saveProgress(); }
+  render(); window.scrollTo(0, 0);
+}
+function reviewView(){
+  const v = view, frag = document.createDocumentFragment();
+  const total = v.items.length, pos = Math.min(v.idx, total);
+  frag.append(h('div', {class:'lhead'},
+    h('button', {type:'button', class:'iconbtn', 'aria-label':'Close review', onclick:goHome}, icon(I.x)),
+    h('div', {class:'rbar', role:'progressbar', 'aria-valuemin':'0', 'aria-valuemax':String(total), 'aria-valuenow':String(pos)},
+      h('i', {style:'width:' + Math.round(pos / total * 100) + '%'}))));
+  if (v.done) return frag.append(reviewDone()), frag;
+  const it = v.items[v.idx], src = audioFor(it.L, it.n, it.ga);
+  const card = h('section', {class:'card', 'aria-label':'Review'},
+    h('div', {style:'display:flex;justify-content:space-between;align-items:baseline;gap:8px'},
+      h('span', {class:'eyebrow', style:'color:var(--muted)'}, it.retry ? 'Arís · One more go' : it.mode === 'say' ? 'Abair é · Say it' : 'Tóg é · Build it'),
+      h('span', {class:'counter'}, (v.idx + 1) + ' de ' + total)));
+  if (it.mode === 'say'){
+    put(card, 
+      h('div', null, h('p', {class:'phrase', lang:'ga'}, it.ga), h('p', {class:'en'}, it.en)),
+      it.sound ? h('p', {class:'say'}, 'Sound it out: ', h('b', null, it.sound)) : null,
+      h('div', {class:'hear'}, playBtn(src, it.ga)),
+      recordRow(src, v.takes[v.idx], url => { v.takes[v.idx] = url; if (view === v){ const typed = answerText(); render(); const box = document.getElementById('answer'); if (box && typed) box.value = typed; } }));
+  } else {
+    put(card, 
+      h('div', null, h('p', {class:'en', style:'font-size:14px'}, 'How would you say…'), h('p', {class:'phrase'}, it.en)),
+      v.reveal || v.check ? h('p', {class:'reveal'}, 'Answer: ', h('b', {lang:'ga'}, it.ga), playBtn(src, it.ga, {class:'btn', style:'min-height:36px;margin-left:8px'}))
+        : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { v.reveal = true; render(); }}, 'Show me the answer'));
+  }
+  put(card, 
+    v.check ? null : answerBox(it.mode === 'say' ? 'Now say it' : 'Say it in Irish', text => doCheck(it.ga, text)),
+    resultBlock(v.check),
+    h('div', {class:'row'}, v.check
+      ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
+         h('button', {type:'button', class:'btn primary grow', onclick:reviewNext}, v.idx === total - 1 ? 'Críochnaigh · Finish' : 'Next')]
+      : [h('button', {type:'button', class:'btn', onclick:reviewNext}, 'Skip'),
+         h('button', {type:'button', class:'btn primary grow', onclick:() => doCheck(it.ga)}, 'Check')]));
+  frag.append(card);
+  return frag;
+}
+function reviewDone(){
+  const v = view, firsts = Object.entries(v.noted), good = firsts.filter(([, s]) => s >= 0.85).length;
+  const misses = v.items.filter(it => !it.retry && v.noted[it.ga] < 0.85);
+  return h('div', {style:'display:flex;flex-direction:column;gap:14px'},
+    h('div', {class:'done-hero'},
+      h('span', {class:'badge'}, icon(I.check, 28)),
+      h('div', null, h('h1', null, 'Maith thú!'), h('p', {class:'en'}, 'Review done · streak ' + currentStreak()))),
+    h('div', {class:'stats', style:'grid-template-columns:repeat(2,minmax(0,1fr))'},
+      h('div', {class:'stat'}, h('b', null, good + '/' + firsts.length), h('span', null, 'right first time')),
+      h('div', {class:'stat'}, h('b', null, learnedItems().filter(isDue).length), h('span', null, 'still due today'))),
+    misses.length ? h('section', {class:'card'},
+      h('span', {class:'eyebrow', style:'color:var(--gorse-text)'}, 'Le cleachtadh · Coming back soon'),
+      h('ul', {class:'plain'}, misses.map(it => h('li', null, h('b', {lang:'ga'}, it.ga), ' · ', it.en)))) : null,
+    h('div', {class:'row'},
+      h('button', {type:'button', class:'btn', onclick:goHome}, 'Ar ais · Back'),
+      h('button', {type:'button', class:'btn primary grow', onclick:openReview}, 'Practise more')));
 }
 
 /* ---------- Comhrá: live chat ---------- */
