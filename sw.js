@@ -1,5 +1,5 @@
 // Offline cache for Labhair. Bump VERSION whenever you change any app file so phones pick up the update.
-const VERSION = 'labhair-v6';
+const VERSION = 'labhair-v7';
 const FILES = ['./', './index.html', './styles.css', './app.js', './content.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/abair-logo.svg'];
 
 // Phrase audio: every file listed in audio/index.json, so lessons can be heard offline.

@@ -58,8 +58,30 @@ function grade(expected, said){
 const DEFAULT_SETTINGS = { key:'', model:'claude-sonnet-5-5', lang:'ga-IE', autoSend:false, voiceCheck:'speech', azureKey:'', azureRegion:'', autoPlay:true };
 let settings = {...DEFAULT_SETTINGS, ...store.get('labhair-settings', {})};
 const saveSettings = () => store.set('labhair-settings', settings);
-let progress = {done:{}, streak:0, lastDay:'', said:0, ...store.get('labhair-progress', {})};
-const saveProgress = () => store.set('labhair-progress', progress);
+// Profiles: one per person on this phone, each with its own progress. Kids get kid mode and no settings.
+// The first profile is Stiofán's and takes over the progress saved before profiles existed.
+const AVATARS = ['🦊', '🐇', '🐦', '🦡', '🐬', '🐑', '🐄', '🦉', '🐝', '🐞', '🐢', '🐙'];
+let profiles = store.get('labhair-profiles', null);
+if (!profiles){
+  profiles = {current:'p1', list:[{id:'p1', name:window.LEARNER.ga, kind:'adult', band:'', dialect:'u', avatar:'🦊'}]};
+  const old = store.get('labhair-progress', null);
+  if (old) store.set('labhair-progress:p1', old);
+  store.set('labhair-profiles', profiles);
+}
+const saveProfiles = () => store.set('labhair-profiles', profiles);
+const me = () => profiles.list.find(p => p.id === profiles.current) || profiles.list[0];
+const isKid = () => me().kind === 'kid';
+// Who Gráinne is talking to. Stiofán's vocative is in content.js; other names are used as typed.
+const learner = () => me().id === 'p1' ? window.LEARNER : {ga:me().name, en:me().name, vocative:me().name};
+const blankProgress = () => ({done:{}, streak:0, lastDay:'', said:0, items:{}});
+const loadProgress = id => ({...blankProgress(), ...store.get('labhair-progress:' + id, {})});
+let progress = loadProgress(me().id);
+const saveProgress = () => store.set('labhair-progress:' + me().id, progress);
+function switchProfile(id){
+  profiles.current = id; saveProfiles();
+  progress = loadProgress(id);
+  dropTakes(); view = {name:'home'}; render(); window.scrollTo(0, 0);
+}
 function bumpStreak(){
   const t = today();
   if (progress.lastDay !== t){ progress.streak = progress.lastDay === yesterday() ? progress.streak + 1 : 1; progress.lastDay = t; }
@@ -299,8 +321,20 @@ function claudeErrorText(e){
 }
 
 /* ---------- Views ---------- */
-let view = {name:'home'};
-function render(){ stopMic(); stopRec(false); $app.replaceChildren(view.name === 'home' ? homeView() : view.name === 'settings' ? settingsView() : view.name === 'review' ? reviewView() : lessonView()); }
+let view = {name: profiles.list.length > 1 ? 'profiles' : 'home'};
+const VIEWS = {home: () => isKid() ? kidHomeView() : homeView(), settings: () => settingsView(), review: () => reviewView(), profiles: () => profilesView(), lesson: () => lessonView()};
+function render(){ stopMic(); stopRec(false); $app.replaceChildren((VIEWS[view.name] || VIEWS.home)()); }
+const DIALECT_NAMES = {u:'Gaeilge Uladh', c:'Gaeilge Chonnacht', m:'Gaeilge na Mumhan'};
+// A dialect can be chosen once its content file has loaded (content-c.js / content-m.js).
+const dialectReady = d => d === 'u' || !!(window.DIALECTS && window.DIALECTS[d]);
+
+// Kid mode home (filled in by kid mode; this is the fallback).
+function kidHomeView(){
+  return h('section', {class:'card', style:'align-items:center;text-align:center'},
+    h('p', {style:'font-size:56px'}, me().avatar),
+    h('p', {style:'font-weight:800;font-size:20px'}, 'Dia duit, ' + me().name + '!'),
+    h('button', {type:'button', class:'btn', onclick:() => { view = {name:'profiles'}; render(); }}, 'Switch person'));
+}
 function goHome(){ if (view.chat && view.chat.ctl) view.chat.ctl.abort(); dropTakes(); view = {name:'home'}; render(); window.scrollTo(0, 0); }
 
 function homeView(){
@@ -311,7 +345,8 @@ function homeView(){
     h('div', {class:'top'},
       h('span', {class:'brand'}, 'Labhair'),
       h('div', {class:'row', style:'align-items:center'},
-        h('span', {class:'chip'}, 'Gaeilge Uladh'),
+        h('span', {class:'chip'}, DIALECT_NAMES[me().dialect] || DIALECT_NAMES.u),
+        h('button', {type:'button', class:'iconbtn avatar-btn', 'aria-label':'Switch person (' + me().name + ')', onclick:() => { view = {name:'profiles'}; render(); }}, me().avatar),
         h('button', {type:'button', class:'iconbtn', 'aria-label':'Settings', onclick:() => { view = {name:'settings'}; render(); }}, icon(I.gear)))),
     h('div', {class:'stats'},
       h('div', {class:'stat'}, h('b', null, currentStreak()), h('span', null, 'sraith · day streak')),
@@ -325,7 +360,7 @@ function homeView(){
     frag.append(h('section', {class:'review-card', 'aria-label':'Daily review'},
       h('div', null,
         h('span', {class:'eyebrow', style:'color:var(--gorse-text)'}, 'Athbhreithniú laethúil · Daily review'),
-        h('p', {class:'rc-main'}, doneToday ? 'Déanta inniu ✓ · Done for today' : due ? due + ' frása le hathbhreithniú' : 'Níl aon rud le déanamh'),
+        h('p', {class:'rc-main'}, doneToday ? 'Déanta inniu ✓ · Done for today' : due ? 'Le hathbhreithniú: ' + due : 'Níl aon rud le déanamh'),
         h('p', {class:'en', style:'font-size:14px'}, doneToday ? 'Come back tomorrow, or practise a few more now.' : due ? Math.min(due, REVIEW_SIZE) + ' phrases due · about 3 minutes' : 'Nothing due. Practise anyway?')),
       h('button', {type:'button', class:'btn ' + (doneToday || !due ? '' : 'primary'), onclick:openReview}, doneToday || !due ? 'Practise more' : 'Tosaigh · Start')));
   }
@@ -448,6 +483,81 @@ function buildStep(){
       : [h('button', {type:'button', class:'btn primary grow', onclick:() => doCheck(D[1])}, 'Check')]));
 }
 
+/* ---------- Profiles and the grown-up gate ---------- */
+// Press and hold for 3 seconds: easy for adults, enough to stop small hands.
+function holdGate(label, onPass){
+  const fill = h('i', {class:'hold-fill'});
+  const btn = h('button', {type:'button', class:'btn hold', 'aria-label':label + ' (press and hold)'}, fill, h('span', null, label));
+  let t = null;
+  const stop = () => { clearTimeout(t); t = null; btn.classList.remove('holding'); };
+  btn.addEventListener('pointerdown', e => { e.preventDefault(); btn.classList.add('holding'); t = setTimeout(() => { stop(); onPass(); }, 3000); });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) btn.addEventListener(ev, stop);
+  btn.addEventListener('contextmenu', e => e.preventDefault());
+  return btn;
+}
+function gateView(why, onPass){
+  return h('section', {class:'card', style:'align-items:center;text-align:center'},
+    h('p', {style:'font-size:40px'}, '🔒'),
+    h('p', {style:'font-weight:800;font-size:18px'}, 'Iarr ar dhuine fásta · Ask a grown-up'),
+    h('p', {class:'en'}, why),
+    holdGate('Hold for 3 seconds', onPass));
+}
+const BANDS = {u6:'Under 6', '6-9':'6–9', '10-12':'10–12'};
+function profilesView(){
+  const v = view, frag = document.createDocumentFragment();
+  const back = () => { view = {name:'home'}; render(); };
+  frag.append(h('div', {class:'lhead'},
+    h('button', {type:'button', class:'iconbtn', 'aria-label':'Close', onclick:back}, icon(I.x)),
+    h('h2', {style:'font-size:22px;font-weight:800'}, 'Cé atá ag foghlaim? · Who’s learning?')));
+  if (isKid() && !v.unlocked){ frag.append(gateView('Switching person needs a grown-up.', () => { v.unlocked = true; render(); })); return frag; }
+  if (v.edit) return frag.append(profileForm(v.edit)), frag;
+  frag.append(h('div', {class:'ptiles'}, profiles.list.map(p => h('div', {class:'ptile' + (p.id === profiles.current ? ' on' : '')},
+    h('button', {type:'button', class:'pick', onclick:() => switchProfile(p.id)},
+      h('span', {class:'pav', 'aria-hidden':'true'}, p.avatar), h('strong', null, p.name),
+      h('small', null, p.kind === 'kid' ? 'Kid · ' + BANDS[p.band] : DIALECT_NAMES[p.dialect] || DIALECT_NAMES.u)),
+    h('button', {type:'button', class:'pedit', 'aria-label':'Edit ' + p.name, onclick:() => { v.edit = {...p}; render(); }}, '✎')))));
+  frag.append(h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { v.edit = {id:'', name:'', kind:'kid', band:'6-9', dialect:me().dialect || 'u', avatar:AVATARS[profiles.list.length % AVATARS.length]}; render(); }}, '+ Add someone'));
+  return frag;
+}
+function profileForm(p){
+  const v = view, isNew = !p.id;
+  const nameIn = h('input', {type:'text', id:'pname', maxlength:'20', autocomplete:'off', value:p.name, placeholder:'Name'});
+  const kindIn = h('select', {id:'pkind', onchange:() => { p.kind = kindIn.value; bandField.hidden = p.kind !== 'kid'; }},
+    [['adult', 'Adult'], ['kid', 'Child']].map(([val, t]) => h('option', {value:val, selected: p.kind === val ? true : null}, t)));
+  const bandIn = h('select', {id:'pband'}, Object.entries(BANDS).map(([val, t]) => h('option', {value:val, selected: p.band === val ? true : null}, t)));
+  const bandField = h('div', {class:'field', hidden: p.kind !== 'kid'}, h('label', {class:'lbl', for:'pband'}, 'Age'), bandIn);
+  const dialIn = h('select', {id:'pdial'}, Object.entries(DIALECT_NAMES).map(([val, t]) => h('option', {value:val, selected: p.dialect === val ? true : null, disabled: !dialectReady(val) ? true : null}, t + (dialectReady(val) ? '' : ' (coming soon)'))));
+  const avatars = h('div', {class:'avatars', role:'radiogroup', 'aria-label':'Picture'}, AVATARS.map(a => h('button', {type:'button', role:'radio', 'aria-checked': a === p.avatar ? 'true' : 'false', class: a === p.avatar ? 'on' : '', onclick:e => { p.avatar = a; for (const b of avatars.children){ b.classList.toggle('on', b === e.currentTarget); b.setAttribute('aria-checked', b === e.currentTarget ? 'true' : 'false'); } }}, a)));
+  const msg = h('p', {class:'miclabel', role:'status'});
+  const save = () => {
+    const name = nameIn.value.trim();
+    if (!name){ msg.textContent = 'Add a name.'; return; }
+    const out = {...p, name, kind:kindIn.value, band: kindIn.value === 'kid' ? bandIn.value : '', dialect:dialIn.value};
+    if (isNew){ out.id = 'p' + Date.now().toString(36); profiles.list.push(out); }
+    else profiles.list = profiles.list.map(x => x.id === out.id ? out : x);
+    saveProfiles();
+    if (out.id === profiles.current) progress = loadProgress(out.id);
+    v.edit = null; render();
+  };
+  const delBox = h('div', {class:'row', hidden:true},
+    h('button', {type:'button', class:'btn', onclick:() => { delBox.hidden = true; }}, 'Keep'),
+    h('button', {type:'button', class:'btn primary grow', onclick:() => {
+      profiles.list = profiles.list.filter(x => x.id !== p.id); localStorage.removeItem('labhair-progress:' + p.id); saveProfiles();
+      v.edit = null; render();
+    }}, 'Yes, delete ' + p.name));
+  return h('section', {class:'card', 'aria-label': isNew ? 'Add someone' : 'Edit ' + p.name},
+    h('span', {class:'eyebrow', style:'color:var(--muted)'}, isNew ? 'Duine nua · Add someone' : 'Athraigh · Edit'),
+    h('div', {class:'field'}, h('label', {class:'lbl', for:'pname'}, 'Name'), nameIn),
+    h('div', {class:'field'}, h('label', {class:'lbl', for:'pkind'}, 'Who'), kindIn), bandField,
+    h('div', {class:'field'}, h('label', {class:'lbl', for:'pdial'}, 'Dialect'), dialIn),
+    h('div', {class:'field'}, h('span', {class:'lbl'}, 'Picture'), avatars),
+    h('div', {class:'row'},
+      h('button', {type:'button', class:'btn', onclick:() => { v.edit = null; render(); }}, 'Cancel'),
+      h('button', {type:'button', class:'btn primary grow', onclick:save}, 'Save')),
+    msg,
+    !isNew && p.id !== profiles.current ? [h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { delBox.hidden = false; }}, 'Delete…'), delBox] : null);
+}
+
 /* ---------- Athbhreithniú: daily review ---------- */
 function openReview(){
   const items = pickReview();
@@ -527,18 +637,18 @@ function allowedPhrases(L){
   return all.slice(0, upto).flatMap(x => x.phrases.map(p => p[0]).concat(x.drills.map(d => d[1])));
 }
 function rulesFor(L){
-  const me = window.LEARNER;
+  const me = learner();
   return 'You are Gráinne, a warm, chatty woman from Gaoth Dobhair in Co. Donegal. You are helping ' + me.ga + ' (' + me.en + '), an adult beginner, practise speaking Ulster Irish in a short role-play.\n' +
     'Scene: ' + L.chat.scene + '\n' +
-    'His goals: ' + L.chat.goals.map(g => g[0] + ' = ' + g[1]).join('; ') + '\n' +
-    'Phrases he has learned so far: ' + allowedPhrases(L).join(' | ') + '\n' +
+    'Their goals: ' + L.chat.goals.map(g => g[0] + ' = ' + g[1]).join('; ') + '\n' +
+    'Phrases they have learned so far: ' + allowedPhrases(L).join(' | ') + '\n' +
     'Rules:\n' +
     '- Speak only Ulster Irish in standard spelling (e.g. "Cad é mar atá tú?", "Tá mé", "An dtig leat"). Use mostly the phrases above, plus at most one new simple word per turn.\n' +
-    '- Keep each reply to one or two short sentences. Steer the chat so he gets a natural chance at each goal.\n' +
-    '- His text comes from speech recognition, which often mishears Irish. Judge what he most likely SAID. Ignore capitals, punctuation and spelling slips a listener would not hear; only recast real grammar or word mistakes.\n' +
-    '- If his Irish has a mistake, put the corrected version of what he meant in "recast" and a short, friendly English tip in "note". Otherwise leave both as "".\n' +
-    '- If he speaks English, put the Irish for what he meant in "recast" and gently invite him to say it in Irish.\n' +
-    '- "goalsMet" lists the ids of every goal he has achieved so far in the whole chat.\n' +
+    '- Keep each reply to one or two short sentences. Steer the chat so they get a natural chance at each goal.\n' +
+    '- Their text comes from speech recognition, which often mishears Irish. Judge what they most likely SAID. Ignore capitals, punctuation and spelling slips a listener would not hear; only recast real grammar or word mistakes.\n' +
+    '- If their Irish has a mistake, put the corrected version of what they meant in "recast" and a short, friendly English tip in "note". Otherwise leave both as "".\n' +
+    '- If they speak English, put the Irish for what they meant in "recast" and gently invite them to say it in Irish.\n' +
+    '- "goalsMet" lists the ids of every goal they have achieved so far in the whole chat.\n' +
     '- Set "done" to true only once every goal is met and you have closed the chat naturally.\n' +
     'Reply with ONLY a JSON object: {"reply": "your line in Irish", "english": "its English translation", "recast": "", "note": "", "goalsMet": [], "done": false}';
 }
@@ -609,10 +719,10 @@ async function evaluate(){
   const v = view, c = v.chat, L = v.L;
   if (!settings.key || !c.msgs.some(m => m.who === 'me')){ v.review = {skipped:true}; render(); return; }
   v.review = {loading:true}; render();
-  const transcript = c.msgs.map(m => m.who === 'g' ? 'Gráinne: ' + m.ga : window.LEARNER.ga + ': ' + m.text).join('\n');
-  const system = 'You are an encouraging Ulster Irish tutor. The learner’s lines came from speech recognition, so judge what he most likely said.';
+  const transcript = c.msgs.map(m => m.who === 'g' ? 'Gráinne: ' + m.ga : learner().ga + ': ' + m.text).join('\n');
+  const system = 'You are an encouraging Ulster Irish tutor. The learner’s lines came from speech recognition, so judge what they most likely said.';
   const prompt = 'Goals: ' + L.chat.goals.map(g => g[1]).join('; ') + '\n\nTranscript:\n' + transcript +
-    '\n\nReply with ONLY JSON: {"wellDone": ["two short specific things he did well"], "practise": ["two short specific things to practise, each with the correct Irish"], "score": 0-' + L.chat.goals.length + ' (one point per goal clearly achieved)}';
+    '\n\nReply with ONLY JSON: {"wellDone": ["two short specific things they did well"], "practise": ["two short specific things to practise, each with the correct Irish"], "score": 0-' + L.chat.goals.length + ' (one point per goal clearly achieved)}';
   try {
     const r = await askClaude(system, [{role:'user', content:prompt}]);
     if (view !== v) return;
@@ -661,6 +771,7 @@ function reviewStep(){
 function settingsView(){
   const back = view.back;
   const frag = document.createDocumentFragment();
+  if (isKid()){ view = {name:'home'}; return VIEWS.home(); } // kids never see settings
   const close = () => { if (back){ view = back; } else view = {name:'home'}; render(); window.scrollTo(0, 0); };
   frag.append(h('div', {class:'lhead'},
     h('button', {type:'button', class:'iconbtn', 'aria-label':'Close settings', onclick:close}, icon(I.x)),
@@ -723,7 +834,7 @@ function settingsView(){
         saveVoice();
         if (!settings.azureKey || !settings.azureRegion){ voiceMsg.textContent = 'Add your key and region first.'; return; }
         voiceMsg.textContent = 'Testing…';
-        try { playAudio(await azureAudio('Dia duit, ' + window.LEARNER.vocative + '!')); voiceMsg.textContent = 'Working. You should hear Gráinne.'; }
+        try { playAudio(await azureAudio('Dia duit, ' + learner().vocative + '!')); voiceMsg.textContent = 'Working. You should hear Gráinne.'; }
         catch(e){ voiceMsg.textContent = 'That didn’t work (' + e.message + '). Check the key and region.'; }
       }}, icon(I.speaker, 16), 'Test'),
       h('button', {type:'button', class:'btn primary grow', onclick:() => { saveVoice(); voiceMsg.textContent = 'Saved.'; }}, 'Save')),
@@ -732,12 +843,49 @@ function settingsView(){
   // Progress
   const confirmBox = h('div', {class:'row', hidden:true},
     h('button', {type:'button', class:'btn', onclick:() => { confirmBox.hidden = true; }}, 'Keep it'),
-    h('button', {type:'button', class:'btn primary grow', onclick:() => { progress = {done:{}, streak:0, lastDay:'', said:0}; saveProgress(); confirmBox.hidden = true; resetMsg.textContent = 'Progress reset.'; }}, 'Yes, reset'));
+    h('button', {type:'button', class:'btn primary grow', onclick:() => { progress = blankProgress(); saveProgress(); confirmBox.hidden = true; resetMsg.textContent = 'Progress reset.'; }}, 'Yes, reset'));
   const resetMsg = h('p', {class:'miclabel', role:'status'});
+  // Backup: every profile's progress in one file. API keys are never included.
+  const fileIn = h('input', {type:'file', accept:'application/json,.json', hidden:true, onchange:() => importBackup(fileIn.files[0])});
+  const importBox = h('div', {class:'row', hidden:true});
+  let pending = null;
+  async function importBackup(file){
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (data.app !== 'labhair' || !data.profiles || !Array.isArray(data.profiles.list) || !data.progress) throw 0;
+      pending = data;
+      resetMsg.textContent = 'Backup from ' + String(data.exported || '').slice(0, 10) + ' with ' + data.profiles.list.length + ' people. This replaces everyone’s progress on this phone.';
+      importBox.hidden = false;
+    } catch(e){ resetMsg.textContent = 'That isn’t a Labhair backup file.'; }
+    fileIn.value = '';
+  }
+  importBox.append(
+    h('button', {type:'button', class:'btn', onclick:() => { importBox.hidden = true; pending = null; resetMsg.textContent = ''; }}, 'Cancel'),
+    h('button', {type:'button', class:'btn primary grow', onclick:() => {
+      for (const p of profiles.list) localStorage.removeItem('labhair-progress:' + p.id);
+      store.set('labhair-profiles', pending.profiles);
+      for (const [id, pr] of Object.entries(pending.progress)) store.set('labhair-progress:' + id, pr);
+      location.reload();
+    }}, 'Yes, restore'));
+  const exportBackup = () => {
+    saveProgress();
+    const data = {app:'labhair', version:1, exported:new Date().toISOString(), profiles,
+      progress:Object.fromEntries(profiles.list.map(p => [p.id, store.get('labhair-progress:' + p.id, {})]))};
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], {type:'application/json'}));
+    const a = h('a', {href:url, download:'labhair-backup-' + today() + '.json'});
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    resetMsg.textContent = 'Backup saved to your Downloads.';
+  };
   frag.append(h('section', {class:'card', 'aria-label':'Progress'},
     h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Progress'),
-    h('p', {class:'en'}, 'Your progress is saved on this phone.'),
-    h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { confirmBox.hidden = false; }}, 'Reset progress…'),
+    h('p', {class:'en'}, 'Progress for everyone is saved on this phone. Back it up now and then, so a new phone or a cleared browser doesn’t lose it.'),
+    h('div', {class:'row'},
+      h('button', {type:'button', class:'btn', onclick:exportBackup}, 'Back up'),
+      h('button', {type:'button', class:'btn', onclick:() => fileIn.click()}, 'Restore…'), fileIn),
+    importBox,
+    h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { confirmBox.hidden = false; }}, 'Reset ' + me().name + '’s progress…'),
     confirmBox, resetMsg));
   return frag;
 }
