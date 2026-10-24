@@ -76,6 +76,10 @@ button,textarea,input,select,a{font-family:inherit}
 .say b{color:var(--fg);font-weight:700;letter-spacing:.3px}
 .hear{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
 .hear a,.hear button{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 12px;border-radius:999px;border:none;background:var(--green-soft);color:var(--green-text);font-weight:800;font-size:13px;text-decoration:none;cursor:pointer}
+.compare{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0}
+.btn.rec .dot{width:12px;height:12px;border-radius:50%;background:var(--red-text)}
+.btn.rec.on{background:var(--gorse);border-color:var(--gorse);color:var(--gorse-ink);animation:pulse 1.2s ease-in-out infinite}
+.btn.rec.on .dot{border-radius:3px;background:var(--gorse-ink)}
 .counter{font-size:13px;font-weight:700;color:var(--muted)}
 label.lbl{font-size:14px;font-weight:700}
 textarea,input[type=text],input[type=password],select{width:100%;border:1.5px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg);font-size:18px;padding:10px 12px}

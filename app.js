@@ -95,7 +95,14 @@ function audioFor(L, n, text){
   return audioIndex && audioIndex.files && audioIndex.files[rel] === text ? 'audio/' + rel : null;
 }
 const player = new Audio();
-function playAudio(src){ try { speechSynthesis.cancel(); } catch(e){} player.src = src; player.currentTime = 0; player.play().catch(() => {}); }
+function playAudio(src){ try { speechSynthesis.cancel(); } catch(e){} player.onended = null; player.src = src; player.currentTime = 0; player.play().catch(() => {}); }
+// Play several clips one after another (native, then my take).
+function playSeq(srcs){
+  const [first, ...rest] = srcs;
+  if (!first) return;
+  playAudio(first);
+  if (rest.length) player.onended = () => setTimeout(() => playSeq(rest), 350);
+}
 // A play button for a whole phrase: the ABAIR recording if we have one, else the phone's Irish voice, else nothing.
 // Gráinne's voice: Azure Speech (ga-IE Orla) with your own key, else the phone's Irish voice, else silence.
 const ttsCache = new Map();
@@ -139,6 +146,7 @@ function answerBox(label, onFinal){
     if (activeRec){ activeRec.stop(); return; }
     // Stop any audio so the mic doesn't hear Gráinne or the phrase recording.
     player.pause(); try { speechSynthesis.cancel(); } catch(e){}
+    stopRec(false);
     let finalText = '', failed = false;
     const r = new SR();
     r.lang = settings.lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
@@ -159,6 +167,57 @@ function answerBox(label, onFinal){
   return [h('label', {class:'lbl', for:'answer'}, label), h('div', {class:'answer'}, ta, mic), status];
 }
 const answerText = () => { const t = document.getElementById('answer'); return t ? t.value.trim() : ''; };
+
+/* ---------- Record yourself (Abair é) ---------- */
+const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+let recorder = null, recTimer = null;
+const takeUrls = [];
+function dropTakes(){ while (takeUrls.length) URL.revokeObjectURL(takeUrls.pop()); }
+// Stop recording. If keep is false (leaving the screen), the take is thrown away.
+function stopRec(keep){
+  if (!recorder) return;
+  recorder.keep = keep;
+  clearTimeout(recTimer);
+  if (recorder.state === 'recording') recorder.stop();
+}
+function recErrorText(e){
+  return e && e.name === 'NotAllowedError' ? 'Microphone is blocked. Allow it for this site in Chrome, then try again.'
+    : e && e.name === 'NotFoundError' ? 'No microphone found.' : 'Couldn’t start recording. Try again.';
+}
+// onTake(url) gets an object URL for the recording; status is a <p> for messages.
+async function startRec(btn, status, onTake){
+  stopMic(); player.pause();
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}}); }
+  catch(e){ status.textContent = recErrorText(e); return; }
+  if (!btn.isConnected){ stream.getTracks().forEach(t => t.stop()); return; } // left the screen while Chrome asked
+  const chunks = [], r = new MediaRecorder(stream);
+  r.keep = true;
+  r.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  r.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    if (recorder === r) recorder = null;
+    if (!r.keep || !chunks.length) return;
+    const url = URL.createObjectURL(new Blob(chunks, {type: r.mimeType || 'audio/webm'}));
+    takeUrls.push(url); onTake(url);
+  };
+  r.start(); recorder = r;
+  btn.classList.add('on'); btn.setAttribute('aria-pressed', 'true');
+  btn.lastChild.textContent = 'Stad · Stop';
+  status.textContent = 'Ag taifeadadh… · Recording. Tap Stop when you’ve said it.';
+  recTimer = setTimeout(() => stopRec(true), 10000); // safety: stop after 10 seconds
+}
+function recordRow(native, take, onTake){
+  if (!canRecord) return null;
+  const status = h('p', {class:'miclabel', role:'status'}, take ? '' : 'Record yourself, then compare with Áine.');
+  const btn = h('button', {type:'button', class:'btn rec', 'aria-pressed':'false', onclick:() => recorder ? stopRec(true) : startRec(btn, status, onTake)},
+    h('span', {class:'dot', 'aria-hidden':'true'}), take ? 'Arís · Re-record' : 'Taifead · Record');
+  return h('div', {class:'compare'},
+    h('div', {class:'row'}, btn,
+      take ? h('button', {type:'button', class:'btn', onclick:() => playAudio(take)}, icon(I.speaker, 16), 'Mise · Me') : null,
+      take && native ? h('button', {type:'button', class:'btn primary grow', onclick:() => playSeq([native, take])}, 'Áine, then me') : null),
+    status);
+}
 
 /* ---------- Claude (Gráinne) ---------- */
 function parseJSON(text){
@@ -198,8 +257,8 @@ function claudeErrorText(e){
 
 /* ---------- Views ---------- */
 let view = {name:'home'};
-function render(){ stopMic(); $app.replaceChildren(view.name === 'home' ? homeView() : view.name === 'settings' ? settingsView() : lessonView()); }
-function goHome(){ if (view.chat && view.chat.ctl) view.chat.ctl.abort(); view = {name:'home'}; render(); window.scrollTo(0, 0); }
+function render(){ stopMic(); stopRec(false); $app.replaceChildren(view.name === 'home' ? homeView() : view.name === 'settings' ? settingsView() : lessonView()); }
+function goHome(){ if (view.chat && view.chat.ctl) view.chat.ctl.abort(); dropTakes(); view = {name:'home'}; render(); window.scrollTo(0, 0); }
 
 function homeView(){
   const ls = allLessons(), doneCount = ls.filter(l => progress.done[l.id]).length;
@@ -240,7 +299,8 @@ function homeView(){
 function openLesson(id){
   const L = allLessons().find(l => l.id === id);
   const steps = L.checkpoint ? ['Comhrá', 'Críoch'] : ['Abair é', 'Tóg é', 'Comhrá', 'Críoch'];
-  view = {name:'lesson', L, steps, step:0, idx:0, check:null, reveal:false, said:[], drills:[],
+  dropTakes();
+  view = {name:'lesson', L, steps, step:0, idx:0, check:null, reveal:false, said:[], drills:[], takes:{},
     chat:{msgs:[{who:'g', ga:L.chat.opener, en:L.chat.openerEn}], turns:[], goalsMet:[], done:false, busy:false, error:'', ctl:null},
     review:null};
   render(); window.scrollTo(0, 0);
@@ -300,6 +360,12 @@ function sayStep(){
     h('div', null, h('p', {class:'phrase', lang:'ga'}, P[0]), h('p', {class:'en'}, P[1])),
     h('p', {class:'say'}, 'Sound it out: ', h('b', null, P[2])),
     hearRow(P, audioFor(v.L, v.idx + 1, P[0])),
+    recordRow(audioFor(v.L, v.idx + 1, P[0]), v.takes[v.idx], url => {
+      v.takes[v.idx] = url;
+      if (view !== v) return;
+      const typed = answerText(); render();
+      const box = document.getElementById('answer'); if (box && typed) box.value = typed;
+    }),
     v.check ? null : answerBox('Now say it', text => doCheck(P[0], text)),
     resultBlock(v.check),
     h('div', {class:'row'}, v.check
