@@ -1,6 +1,7 @@
 // Makes the phrase audio with the ABAIR API (abair.ie, Trinity College Dublin). Node 18+, no packages.
 //   node tools/make-audio.mjs           make any missing or out-of-date MP3s
 //   node tools/make-audio.mjs --voices  list the voices your key can use
+//   node tools/make-audio.mjs --unit u2 only that unit (ABAIR asks for no bulk sweeps, so go a unit at a time)
 // Needs ABAIR_API_KEY in .env (gitignored). Optional: ABAIR_VOICE (a voice id, default: first Ulster voice), ABAIR_SPEED (default 0.9).
 // Files: audio/<lessonId>/<n>.mp3, phrases first (1..P) then drill answers (P+1..).
 // audio/index.json records the text of each file, so changed phrases get remade and the app knows what exists.
@@ -52,8 +53,15 @@ async function main(){
   const index = {voice, files:{}};
   let made = 0, kept = 0;
 
+  const argUnit = process.argv.includes('--unit') ? process.argv[process.argv.indexOf('--unit') + 1] : null;
   for (const U of sandbox.window.UNITS) for (const L of U.lessons){
     if (L.checkpoint) continue;
+    if (argUnit && U.id !== argUnit){
+      // Keep other units' entries so the index stays complete.
+      const texts = L.phrases.map(p => p[0]).concat(L.drills.map(d => d[1]));
+      texts.forEach((t, i) => { const rel = L.id + '/' + (i + 1) + '.mp3'; if (old.files && old.files[rel] === t && fs.existsSync(path.join(ROOT, 'audio', rel))) index.files[rel] = t; });
+      continue;
+    }
     const texts = L.phrases.map(p => p[0]).concat(L.drills.map(d => d[1]));
     fs.mkdirSync(path.join(ROOT, 'audio', L.id), {recursive:true});
     for (let i = 0; i < texts.length; i++){
