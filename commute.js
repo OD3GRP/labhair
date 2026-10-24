@@ -57,10 +57,6 @@ async function commutePlay(){
   }
   if (alive()){ v.playing = false; v.finished = true; await sayEnglish('Maith thú! That’s the lot.'); render(); }
 }
-function speakAndWait(text){
-  if (!gaVoice) return Promise.resolve();
-  return new Promise(res => { const u = new SpeechSynthesisUtterance(text); u.voice = gaVoice; u.lang = gaVoice.lang; u.rate = 0.9; u.onend = u.onerror = () => res(); speechSynthesis.cancel(); speechSynthesis.speak(u); });
-}
 function commutePause(){ const v = view; v.playing = false; v.run++; player.pause(); try { speechSynthesis.cancel(); } catch(e){} updateCommuteUI(); }
 function commuteStep(d){ const v = view; v.idx = Math.max(0, Math.min(v.items.length - 1, v.idx + d)); v.finished = false; commutePause(); commutePlay(); }
 

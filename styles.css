@@ -276,3 +276,7 @@ body.kidmode #app{gap:14px}
 .weak-row a{display:inline-flex;align-items:center;gap:6px;font-weight:800;font-size:17px;color:var(--green-text);text-decoration:none}
 .weak-row small{flex:1;color:var(--muted);font-size:13px}
 body.kidmode .robin{display:none}
+
+/* ---------- Tutor portrait in the chat ---------- */
+.scene-top{display:flex;align-items:center;gap:12px}
+.scene-top .cast.portrait{width:84px;height:84px;flex:none;background:var(--slate-track);border-radius:50%;overflow:hidden;animation:none}

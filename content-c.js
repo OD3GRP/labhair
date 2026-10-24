@@ -4,7 +4,7 @@ window.DIALECTS = window.DIALECTS || {};
 (function(){
   const P = (ga, en, sound, words, lit, why) => [ga, en, sound, words, {lit, why}];
   window.DIALECTS.c = {
-    tutor: {name:'Nóra', place:'An Cheathrú Rua', county:'Conamara, Co. Galway', dialect:'Connacht Irish (Conamara)',
+    tutor: {name:'Nóra', cast:'nora', free:['Haigh! Cén chaoi a bhfuil tú inniu? Céard atá ag tarlú?', 'Hi! How are you today? What’s happening?'], place:'An Cheathrú Rua', county:'Conamara, Co. Galway', dialect:'Connacht Irish (Conamara)',
       examples:'"Cén chaoi a bhfuil tú?", "Céard", "Tá mé", "An féidir leat", "báisteach"'},
     swap: {'Gráinne':'Nóra', 'Gaoth Dobhair':'An Cheathrú Rua', 'Donegal Town':'Galway', 'Machaire Rabhartaigh':'Trá an Dóilín', 'Bun Beag':'An Spidéal', 'Donegal':'Conamara'},
     lessons: {

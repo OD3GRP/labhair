@@ -4,7 +4,7 @@ window.DIALECTS = window.DIALECTS || {};
 (function(){
   const P = (ga, en, sound, words, lit, why) => [ga, en, sound, words, {lit, why}];
   window.DIALECTS.m = {
-    tutor: {name:'Máire', place:'Baile an Fheirtéaraigh', county:'Corca Dhuibhne, Co. Kerry', dialect:'Munster Irish (Corca Dhuibhne)',
+    tutor: {name:'Máire', cast:'maire', free:['Haigh! Conas atá tú inniu? Cad atá ag tarlú?', 'Hi! How are you today? What’s happening?'], place:'Baile an Fheirtéaraigh', county:'Corca Dhuibhne, Co. Kerry', dialect:'Munster Irish (Corca Dhuibhne)',
       examples:'"Conas atá tú?", "Táim", "Cad is ainm duit?", "Cathain", "An féidir leat"'},
     swap: {'Gráinne':'Máire', 'Gaoth Dobhair':'Baile an Fheirtéaraigh', 'Donegal Town':'Dingle', 'Machaire Rabhartaigh':'Ceann Trá', 'Bun Beag':'An Daingean', 'Donegal':'Kerry'},
     lessons: {

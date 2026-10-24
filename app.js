@@ -267,11 +267,19 @@ async function sayEnglish(text){
     player.pause(); speechSynthesis.cancel(); speechSynthesis.speak(u);
   });
 }
-async function sayGrainne(text){
-  if (settings.azureKey && settings.azureRegion){
-    try { playAudio(await azureAudio(text)); return; } catch(e){}
-  }
-  speak(text);
+// The tutor speaks: a ready-made clip if there is one (her opening line, in the dialect's ABAIR voice), else Azure, else the phone.
+// Her portrait's mouth moves while she talks. Resolves when she's finished.
+async function sayGrainne(text, src){
+  const flap = on => { const p = document.querySelector('.cast.portrait'); if (p) p.talk(on); };
+  let url = src || null;
+  if (!url && hasAzure()){ try { url = await azureAudio(text); } catch(e){} }
+  flap(true);
+  if (url) await playAndWait(url); else await speakAndWait(text);
+  flap(false);
+}
+function speakAndWait(text){
+  if (!gaVoice) return Promise.resolve();
+  return new Promise(res => { const u = new SpeechSynthesisUtterance(text); u.voice = gaVoice; u.lang = gaVoice.lang; u.rate = 0.9; u.onend = u.onerror = () => res(); speechSynthesis.cancel(); speechSynthesis.speak(u); });
 }
 const canVoiceGrainne = () => !!(settings.azureKey && settings.azureRegion) || !!gaVoice;
 function playBtn(src, text, props){
@@ -286,6 +294,8 @@ function slowBtn(src, text, props){
 
 // How sure the recogniser was about the last thing you said (0–1, or 0 if it didn't say). Typed answers reset it.
 let lastConfidence = 0;
+// True while hands-free chat opens the mic by itself; if Chrome wants a tap for that, we say so kindly.
+let autoMic = false;
 // The answer box: a text area plus a mic button that fills it with what you said.
 function answerBox(label, onFinal){
   const ta = h('textarea', {id:'answer', rows:'2', autocomplete:'off', autocapitalize:'sentences', spellcheck:'false', lang:'ga', placeholder: SR ? 'Tap the mic and speak, or type' : 'Type your answer'});
@@ -308,7 +318,7 @@ function answerBox(label, onFinal){
       const last = e.results[e.results.length - 1];
       if (last.isFinal){ finalText = t; lastConfidence = last[0].confidence || 0; }
     };
-    r.onerror = e => { failed = true; status.textContent = micError(e.error); };
+    r.onerror = e => { failed = true; status.textContent = autoMic && e.error === 'not-allowed' ? 'Your turn: tap the mic to reply.' : micError(e.error); autoMic = false; };
     r.onend = () => {
       activeRec = null; mic.classList.remove('on'); mic.setAttribute('aria-pressed', 'false');
       if (!failed) status.textContent = 'Tap the mic and say it in Irish';
@@ -463,6 +473,7 @@ function homeView(){
   }
   frag.append(h('div', {class:'tools'},
     h('button', {type:'button', class:'tool', onclick:() => openCommute()}, h('span', {'aria-hidden':'true'}, '🎧'), h('strong', null, 'Hands-free'), h('small', null, 'For a walk or the car')),
+    canFreeChat() ? h('button', {type:'button', class:'tool', onclick:() => openFreeChat()}, h('span', {'aria-hidden':'true'}, '💬'), h('strong', null, 'Free chat'), h('small', null, 'Talk about anything with ' + tutor().name)) : null,
     Object.keys(progress.weak || {}).length ? h('button', {type:'button', class:'tool', onclick:() => { view = {name:'weak'}; render(); window.scrollTo(0, 0); }}, h('span', {'aria-hidden':'true'}, '🎯'), h('strong', null, 'Weak words'), h('small', null, Object.keys(progress.weak).length + ' to practise')) : null));
   for (const U of course()){
     const done = U.lessons.filter(l => progress.done[l.id]).length;
@@ -484,8 +495,9 @@ function homeView(){
   return frag;
 }
 
+// id, or a lesson object (the free chat isn't in the course).
 function openLesson(id){
-  const L = allLessons().find(l => l.id === id);
+  const L = typeof id === 'object' ? id : allLessons().find(l => l.id === id);
   const steps = L.checkpoint ? ['Comhrá', 'Críoch'] : ['Abair é', 'Tóg é', 'Comhrá', 'Críoch'];
   dropTakes();
   view = {name:'lesson', L, steps, step:0, idx:0, check:null, reveal:false, said:[], drills:[], takes:{},
@@ -777,8 +789,10 @@ function rulesFor(L){
   const me = learner(), T = tutor();
   return 'You are ' + T.name + ', a warm, chatty woman from ' + T.place + ' in ' + T.county + '. You are helping ' + me.ga + ' (' + me.en + '), an adult beginner, practise speaking ' + T.dialect + ' in a short role-play.\n' +
     'Scene: ' + L.chat.scene + '\n' +
-    'Their goals: ' + L.chat.goals.map(g => g[0] + ' = ' + g[1]).join('; ') + '\n' +
+    (L.chat.goals.length ? 'Their goals: ' + L.chat.goals.map(g => g[0] + ' = ' + g[1]).join('; ') + '\n'
+      : 'There are no set goals: just chat naturally about their life, family, the weather and plans, and ask one simple question each turn to keep it going.\n') +
     'Phrases they have learned so far: ' + allowedPhrases(L).join(' | ') + '\n' +
+    (memory().length ? 'Things you remember about them from earlier chats (bring one up naturally if it fits): ' + memory().join('; ') + '\n' : '') +
     'Rules:\n' +
     '- Speak only ' + T.dialect + ' in standard spelling (e.g. ' + T.examples + '). Use mostly the phrases above, plus at most one new simple word per turn.\n' +
     '- Keep each reply to one or two short sentences. Steer the chat so they get a natural chance at each goal.\n' +
@@ -787,20 +801,44 @@ function rulesFor(L){
     '- If they speak English, put the Irish for what they meant in "recast" and gently invite them to say it in Irish.\n' +
     '- "goalsMet" lists the ids of every goal they have achieved so far in the whole chat.\n' +
     '- Set "done" to true only once every goal is met and you have closed the chat naturally.\n' +
-    'Reply with ONLY a JSON object: {"reply": "your line in Irish", "english": "its English translation", "recast": "", "note": "", "goalsMet": [], "done": false}';
+    '- "mood" is your face as you say your line: one of happy, laughing, surprised, confused, thinking, listening, neutral.\n' +
+    '- "remember" lists any NEW short facts about them worth remembering for future chats, in English (e.g. "has a brother called Seán"). Usually [].\n' +
+    'Reply with ONLY a JSON object: {"reply": "your line in Irish", "english": "its English translation", "recast": "", "note": "", "goalsMet": [], "done": false, "mood": "happy", "remember": []}';
+}
+// What the tutor remembers about this person, kept on the phone with their progress.
+const memory = () => progress.memory || [];
+function remember(facts){
+  if (!Array.isArray(facts)) return;
+  const m = memory().slice();
+  for (const f of facts.map(String).map(s => s.trim()).filter(Boolean)) if (!m.some(x => x.toLowerCase() === f.toLowerCase())) m.push(f.slice(0, 120));
+  progress.memory = m.slice(-25); saveProgress();
+}
+// Free chat: an open conversation using everything learned so far.
+function canFreeChat(){ return allLessons().filter(l => l.unit.num === 1 && !l.checkpoint).every(l => progress.done[l.id]) || !!progress.done['u1-cp']; }
+function openFreeChat(){
+  const T = tutor(), units = course();
+  const last = [...units].reverse().find(U => U.lessons.some(l => progress.done[l.id])) || units[0];
+  openLesson({id:'free', free:true, checkpoint:true, ga:'Comhrá saor', en:'Free chat', goal:'Talk about anything you like', unit:last,
+    chat:{scene:T.name + ' rings you for a chat. Talk about anything you like.', opener:T.free[0], openerEn:T.free[1], goals:[]}});
 }
 function talkStep(){
   const v = view, L = v.L, c = v.chat;
   const wrap = h('div', {style:'display:flex;flex-direction:column;gap:14px'});
+  const T = tutor(), openerSrc = L.free ? null : audioFor(L, 'opener', L.chat.opener);
   wrap.append(h('section', {class:'scene', 'aria-label':'Scene and goals'},
-    h('span', {class:'eyebrow', style:'color:var(--gorse)'}, 'Comhrá · Talk'),
-    h('p', null, L.chat.scene),
-    h('div', {class:'goals'}, L.chat.goals.map(g => { const met = c.goalsMet.includes(g[0]); return h('span', {class:'goal' + (met ? ' met' : '')}, (met ? '✓ ' : '') + g[1]); }))));
+    h('div', {class:'scene-top'}, castEl(T.cast, c.busy ? 'listening' : c.mood || 'happy', 'portrait'),
+      h('div', null, h('span', {class:'eyebrow', style:'color:var(--gorse)'}, 'Comhrá · Talk with ' + T.name), h('p', null, L.chat.scene))),
+    L.chat.goals.length ? h('div', {class:'goals'}, L.chat.goals.map(g => { const met = c.goalsMet.includes(g[0]); return h('span', {class:'goal' + (met ? ' met' : '')}, (met ? '✓ ' : '') + g[1]); })) : null));
+  // Her opening line plays by itself the first time, in the dialect's ABAIR voice when we have it.
+  if (c.msgs.length === 1 && !c.openerPlayed && settings.autoPlay && (openerSrc || canVoiceGrainne())){
+    c.openerPlayed = true;
+    setTimeout(() => { if (view === v) sayGrainne(L.chat.opener, openerSrc); }, 500);
+  }
   const list = h('div', {class:'chat'});
-  for (const m of c.msgs){
+  for (const [i, m] of c.msgs.entries()){
     if (m.who === 'g') list.append(h('div', {class:'msg g'},
       h('div', {class:'bubble', lang:'ga'}, m.ga), m.en ? h('small', null, m.en) : null,
-      canVoiceGrainne() ? h('button', {type:'button', class:'say-again', 'aria-label':'Play again: ' + m.ga, onclick:() => sayGrainne(m.ga)}, icon(I.speaker, 14), 'Éist arís · Replay') : null));
+      (i === 0 && openerSrc) || canVoiceGrainne() ? h('button', {type:'button', class:'say-again', 'aria-label':'Play again: ' + m.ga, onclick:() => sayGrainne(m.ga, i === 0 ? openerSrc : null)}, icon(I.speaker, 14), 'Éist arís · Replay') : null));
     else list.append(h('div', {class:'msg me'}, h('div', {class:'bubble', lang:'ga'}, m.text),
       m.recast ? h('div', {class:'fix'}, h('b', {lang:'ga'}, 'Níos fearr: ' + m.recast), m.note ? h('div', null, m.note) : null) : null));
   }
@@ -811,7 +849,7 @@ function talkStep(){
     wrap.append(h('p', {class:'note'}, 'Chatting with ' + tutor().name + ' needs your Claude API key. ', h('button', {type:'button', class:'btn', style:'margin-top:8px', onclick:() => { view = {name:'settings', back:v}; render(); }}, 'Open Settings')));
   } else if (!c.done){
     wrap.append(h('section', {class:'card'},
-      answerBox('Your reply in Irish', settings.autoSend ? () => sendChat() : null),
+      answerBox('Your reply in Irish', settings.autoSend || settings.handsFree ? () => sendChat() : null),
       h('div', {class:'row'},
         c.busy ? h('button', {type:'button', class:'btn', onclick:() => c.ctl && c.ctl.abort()}, 'Stop') : null,
         h('button', {type:'button', class:'btn primary grow', disabled: c.busy ? true : null, onclick:sendChat}, 'Seol · Send'))));
@@ -833,21 +871,31 @@ async function sendChat(){
   const opener = {reply:L.chat.opener, english:L.chat.openerEn, recast:'', note:'', goalsMet:[], done:false};
   let recent = c.turns.slice(-20); if (recent[0] && recent[0].role === 'assistant') recent = recent.slice(1);
   const messages = [{role:'user', content:'Start the role-play.'}, {role:'assistant', content:JSON.stringify(opener)}].concat(recent);
-  let restore = '';
+  let restore = '', spoken = '';
   try {
     const r = await askClaude(rulesFor(L), messages, c.ctl.signal);
     if (view !== v) return;
     const mine = c.msgs[c.msgs.length - 1];
     if (typeof r.recast === 'string' && r.recast.trim()){ mine.recast = r.recast.trim(); mine.note = typeof r.note === 'string' ? r.note : ''; }
-    if (typeof r.reply === 'string' && r.reply){ c.msgs.push({who:'g', ga:r.reply, en: typeof r.english === 'string' ? r.english : ''}); c.turns.push({role:'assistant', content:JSON.stringify(r)}); if (settings.autoPlay) sayGrainne(r.reply); }
+    if (typeof r.reply === 'string' && r.reply){ c.msgs.push({who:'g', ga:r.reply, en: typeof r.english === 'string' ? r.english : ''}); c.turns.push({role:'assistant', content:JSON.stringify(r)}); spoken = r.reply; }
     if (Array.isArray(r.goalsMet)) c.goalsMet = Array.from(new Set(c.goalsMet.concat(r.goalsMet.map(String))));
     if (r.done === true) c.done = true;
+    if (typeof r.mood === 'string' && window.EXPRESSIONS && EXPRESSIONS.includes(r.mood)) c.mood = r.mood;
+    remember(r.remember);
   } catch(e){
     if (view !== v) return;
     c.msgs.pop(); c.turns.pop(); restore = text;
     if (!(e && e.kind === 'cancelled')) c.error = claudeErrorText(e);
   } finally {
     if (view === v){ c.busy = false; c.ctl = null; render(); const box = document.getElementById('answer'); if (box && restore) box.value = restore; }
+  }
+  // She says it, then (hands-free) the mic opens for your answer.
+  if (spoken && settings.autoPlay && view === v){
+    await sayGrainne(spoken);
+    if (settings.handsFree && view === v && !c.done && !c.busy && !activeRec){
+      const mic = document.querySelector('.answer .mic');
+      if (mic){ autoMic = true; mic.click(); }
+    }
   }
 }
 
@@ -858,8 +906,9 @@ async function evaluate(){
   v.review = {loading:true}; render();
   const transcript = c.msgs.map(m => m.who === 'g' ? tutor().name + ': ' + m.ga : learner().ga + ': ' + m.text).join('\n');
   const system = 'You are an encouraging ' + tutor().dialect + ' tutor. The learner’s lines came from speech recognition, so judge what they most likely said.';
-  const prompt = 'Goals: ' + L.chat.goals.map(g => g[1]).join('; ') + '\n\nTranscript:\n' + transcript +
+  let prompt = 'Goals: ' + L.chat.goals.map(g => g[1]).join('; ') + '\n\nTranscript:\n' + transcript +
     '\n\nReply with ONLY JSON: {"wellDone": ["two short specific things they did well"], "practise": ["two short specific things to practise, each with the correct Irish"], "score": 0-' + L.chat.goals.length + ' (one point per goal clearly achieved)}';
+  if (!L.chat.goals.length) prompt = prompt.replace(/, "score": .*}$/, '}');
   try {
     const r = await askClaude(system, [{role:'user', content:prompt}]);
     if (view !== v) return;
@@ -869,9 +918,9 @@ async function evaluate(){
 }
 function reviewStep(){
   const v = view, L = v.L, c = v.chat;
-  if (!progress.done[L.id]) markDone(L.id);
+  if (L.free){ bumpStreak(); saveProgress(); } else if (!progress.done[L.id]) markDone(L.id);
   const passed = arr => arr.filter(x => x >= 0.85).length;
-  const ls = allLessons(), nextL = ls[ls.findIndex(l => l.id === L.id) + 1];
+  const ls = allLessons(), nextL = L.free ? null : ls[ls.findIndex(l => l.id === L.id) + 1];
   const wrap = h('div', {style:'display:flex;flex-direction:column;gap:14px'},
     h('div', {class:'done-hero'},
       h('span', {class:'badge'}, icon(I.check, 28)),
@@ -881,7 +930,7 @@ function reviewStep(){
     stats.push(h('div', {class:'stat'}, h('b', null, passed(v.said) + '/' + L.phrases.length), h('span', null, 'phrases said well')));
     stats.push(h('div', {class:'stat'}, h('b', null, passed(v.drills) + '/' + L.drills.length), h('span', null, 'built well')));
   }
-  stats.push(h('div', {class:'stat'}, h('b', null, c.goalsMet.filter(g => L.chat.goals.some(x => x[0] === g)).length + '/' + L.chat.goals.length), h('span', null, 'chat goals met')));
+  if (L.chat.goals.length) stats.push(h('div', {class:'stat'}, h('b', null, c.goalsMet.filter(g => L.chat.goals.some(x => x[0] === g)).length + '/' + L.chat.goals.length), h('span', null, 'chat goals met')));
   wrap.append(h('div', {class:'stats', style:'grid-template-columns:repeat(' + stats.length + ',minmax(0,1fr))'}, stats));
   const fixes = c.msgs.filter(m => m.who === 'me' && m.recast);
   if (fixes.length) wrap.append(h('section', {class:'card'},
@@ -939,6 +988,7 @@ function settingsView(){
   const modelIn = h('select', {id:'model'}, ['claude-sonnet-5-5', 'claude-haiku-5-5'].map(m => h('option', {value:m, selected: settings.model === m ? true : null}, m === 'claude-sonnet-5-5' ? 'Claude Sonnet 5.5 (best Irish)' : 'Claude Haiku 5.5 (faster, cheaper)')));
   const langIn = h('select', {id:'lang'}, [['ga-IE', 'Irish (ga-IE)'], ['ga', 'Irish (ga)'], ['en-IE', 'English, Ireland (fallback)']].map(([v, t]) => h('option', {value:v, selected: settings.lang === v ? true : null}, t)));
   const autoIn = h('input', {type:'checkbox', id:'auto', checked: settings.autoSend ? true : null, style:'width:22px;height:22px'});
+  const handsIn = h('input', {type:'checkbox', id:'hands', checked: settings.handsFree ? true : null, style:'width:22px;height:22px'});
   const saved = h('p', {class:'miclabel', role:'status'});
   frag.append(h('section', {class:'card', 'aria-label':'Chat settings'},
     h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Gráinne and the mic'),
@@ -948,10 +998,20 @@ function settingsView(){
     h('div', {class:'field'}, h('label', {class:'lbl', for:'lang'}, 'Speech recognition language'), langIn,
       h('small', null, 'If Irish isn’t recognised, try “Irish (ga)”.')),
     h('label', {class:'row', for:'auto', style:'align-items:center;font-weight:700'}, autoIn, 'Send chat replies as soon as I stop speaking'),
+    h('label', {class:'row', for:'hands', style:'align-items:center;font-weight:700'}, handsIn, 'Hands-free chat: open the mic when she finishes speaking'),
     h('div', {class:'row'}, h('button', {type:'button', class:'btn primary grow', onclick:() => {
-      settings = {...settings, key:keyIn.value.trim(), model:modelIn.value, lang:langIn.value, autoSend:autoIn.checked};
+      settings = {...settings, key:keyIn.value.trim(), model:modelIn.value, lang:langIn.value, autoSend:autoIn.checked, handsFree:handsIn.checked};
       saveSettings(); saved.textContent = 'Saved.';
     }}, 'Save')), saved));
+
+  // What the tutor remembers about this person
+  if (memory().length){
+    const memList = h('ul', {class:'plain'}, memory().map(f => h('li', null, f)));
+    frag.append(h('section', {class:'card', 'aria-label':'What she remembers'},
+      h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'What ' + tutor().name + ' remembers about you'),
+      memList,
+      h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:e => { progress.memory = []; saveProgress(); memList.replaceChildren(); e.currentTarget.textContent = 'Forgotten'; }}, 'Forget all of this')));
+  }
 
   // Gráinne's voice (Azure Speech)
   const azKeyIn = h('input', {type:'password', id:'azkey', autocomplete:'off', placeholder:'Azure Speech key', value:settings.azureKey});

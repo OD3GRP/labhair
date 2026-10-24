@@ -11,7 +11,8 @@
     return s;
   };
   window.TUTORS = {
-    u: {name:'Gráinne', place:'Gaoth Dobhair', county:'Co. Donegal', dialect:'Ulster Irish', examples:'"Cad é mar atá tú?", "Tá mé", "An dtig leat", "fosta", "Slán go fóill"'}
+    u: {name:'Gráinne', cast:'grainne', place:'Gaoth Dobhair', county:'Co. Donegal', dialect:'Ulster Irish', examples:'"Cad é mar atá tú?", "Tá mé", "An dtig leat", "fosta", "Slán go fóill"',
+      free:['Haigh! Cad é mar atá tú inniu? Cad é atá ag tarlú?', 'Hi! How are you today? What’s happening?']}
   };
   window.courseFor = function(d){
     if (!d || d === 'u' || !(window.DIALECTS && window.DIALECTS[d])) return window.UNITS;
