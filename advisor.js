@@ -47,7 +47,8 @@ const pickOne = a => a[Math.floor(Math.random() * a.length)];
 /* ---------- The talk-back coach ---------- */
 function coachFor(expected, check, v){
   const res = check.res, total = res.length;
-  const ok = res.filter(r => r.s === 'ok').length, fada = res.filter(r => r.s === 'fada'), miss = res.filter(r => r.s === 'miss');
+  const ok = res.filter(r => r.s === 'ok' || r.s === 'close').length, fada = res.filter(r => r.s === 'fada'), miss = res.filter(r => r.s === 'miss');
+  const close = res.filter(r => r.s === 'close');
   const cur = currentItem(), note = cur && cur.ga === expected ? cur.note : null;
   const tokens = expected.split(/\s+/);
   const orig = w => tokens.find(t => toWords(t)[0] === w) || w;
@@ -68,6 +69,8 @@ function coachFor(expected, check, v){
     details.push('Check the fada on “' + word(r.w) + '”' + (ch ? ': the ' + ch + ' says “' + FADA_SOUND[ch] + '”.' : '.'));
   }
   lines.push(...details.slice(0, 2));
+  if (close.length && details.length < 2) lines.push('The phone wrote ' + close.slice(0, 2).map(r => '“' + word(r.w) + '” as “' + r.heard + '”').join(' and ') + ', but it sounded close, so I’ve counted it.');
+  if (check.english && check.score < 0.85) lines.push('It sounds like the phone heard English, so its Irish recogniser may be struggling. Try the other Irish option in Settings, or type it.');
   if (check.score < 0.85 && details.length < 2 && note && note.lit) lines.push('Word for word, it’s “' + note.lit + '”.');
   // How clearly the phone heard you (the recogniser's confidence, not a native speaker's ear).
   if (check.conf){
@@ -90,6 +93,9 @@ function coachBox(v){
       c.more ? h('p', {class:'coach-more'}, c.more) : null,
       h('div', {class:'row'},
         h('button', {type:'button', class:'btn', style:'min-height:38px', onclick:() => sayEnglish(c.more || c.text)}, icon(I.speaker, 16), 'Again'),
+        settings.talkBack !== false ? h('button', {type:'button', class:'btn', style:'min-height:38px', 'aria-label':'Stop the coach talking (turn back on in Settings)', onclick:() => {
+          settings = {...settings, talkBack:false}; saveSettings(); player.pause(); try { speechSynthesis.cancel(); } catch(e){} render();
+        }}, '🔇 Quiet') : null,
         moreBtn)));
 }
 async function tellMeMore(v){
@@ -128,6 +134,7 @@ function robinSheet(cur, onClose){
     h('div', {class:'sheet-head'}, castEl('spideog', 'happy', 'sheet-bird'),
       h('div', null, h('strong', null, 'An Spideog'), h('small', null, 'The how and the why')),
       h('button', {type:'button', class:'iconbtn', 'aria-label':'Close', onclick:onClose}, icon(I.x))),
+    h('button', {type:'button', class:'btn', style:'align-self:flex-start;min-height:34px;font-size:13px', onclick:() => { settings = {...settings, robin:false}; saveSettings(); robinOpen = false; afterRender(); }}, 'Hide An Spideog (turn back on in Settings)'),
     h('p', {class:'phrase', lang:'ga', style:'font-size:22px'}, cur.ga),
     h('p', {class:'en'}, cur.en),
     cur.note ? [h('p', null, h('span', {class:'eyebrow', style:'color:var(--gorse-text)'}, 'Word for word'), h('br'), '“' + cur.note.lit + '”'),
@@ -143,7 +150,7 @@ let robinOpen = false;
 function afterRender(){
   document.querySelectorAll('.robin, .sheet-wrap').forEach(e => e.remove());
   const cur = currentItem();
-  if (!cur || isKid()) { robinOpen = false; return; }
+  if (!cur || isKid() || settings.robin === false) { robinOpen = false; return; }
   const missed = view.check && view.check.score < 0.85;
   const btn = h('button', {type:'button', class:'robin' + (missed ? ' hop' : ''), 'aria-label':'Ask An Spideog why', onclick:() => { robinOpen = !robinOpen; afterRender(); }},
     castEl('spideog', missed ? 'thinking' : 'neutral'), missed ? h('span', {class:'robin-tip'}, 'Cén fáth?') : null);

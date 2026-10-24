@@ -103,7 +103,7 @@ function sceneView(){
       h('span', {class:'eyebrow', style:'color:var(--gorse-text)'}, 'Your line'),
       h('p', {class:'phrase', style:'font-size:20px'}, ln.en),
       v.check ? h('p', {class:'reveal'}, 'The line: ', h('b', {lang:'ga'}, ln.ga)) : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:e => { e.currentTarget.replaceWith(h('p', {class:'reveal'}, h('b', {lang:'ga'}, ln.ga))); }}, 'Show me the line'),
-      v.check ? null : answerBox('Say it in Irish', text => sceneCheck(ln.ga, text)),
+      v.check ? null : answerBox('Say it in Irish', (text, alts) => sceneCheck(ln.ga, text, alts)),
       resultBlock(v.check),
       h('div', {class:'row'}, v.check
         ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; view.coach = null; render(); }}, 'Try again'),
@@ -120,13 +120,13 @@ function sceneView(){
   }
   return frag;
 }
-function sceneCheck(expected, text){
+function sceneCheck(expected, text, alts){
   const v = view, said = text || answerText();
   if (!said) return;
-  v.check = grade(expected, said);
+  v.check = [said].concat(text && alts ? alts : []).map(a => grade(expected, a, !!text)).reduce((b, g) => g.score > b.score ? g : b);
   v.check.conf = text ? lastConfidence : 0;
   noteWeak(v.check);
-  v.coach = window.coachFor ? coachFor(expected, v.check, v) : null;
+  v.coach = window.coachFor && settings.coach !== false ? coachFor(expected, v.check, v) : null;
   render();
   if (v.coach && settings.talkBack !== false) sayEnglish(v.coach.text);
 }

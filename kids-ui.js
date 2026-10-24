@@ -127,7 +127,7 @@ function kidMic(expected, pass, host, T){
     r.onend = () => {
       activeRec = null; btn.classList.remove('on');
       if (!heard) return;
-      const ok = grade(expected, heard).score >= pass;
+      const ok = grade(expected, heard, true).score >= pass;
       v.result = ok ? 'yes' : 'again';
       if (ok){ progress.said = (progress.said || 0) + 1; saveProgress(); }
       render();

@@ -123,6 +123,8 @@ textarea:focus,input:focus,select:focus{border-color:var(--green);outline:none}
 .w{font-size:17px;font-weight:800;border-radius:8px;padding:3px 10px}
 .w.ok{background:var(--green-soft);color:var(--green-text)}
 .w.fada{background:var(--gorse-soft);color:var(--gorse-text)}
+.w.close{background:#D6E6F5;color:#1F4E79;border:1.5px dashed #6F9BC8}
+@media (prefers-color-scheme: dark){ .w.close{background:#1E3348;color:#B9D6F2} }
 .w.miss{background:var(--red-soft);color:var(--red-text);text-decoration:underline;text-underline-offset:3px}
 .verdict{font-weight:800;font-size:16px}
 .legend{font-size:12px;color:var(--muted)}

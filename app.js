@@ -42,17 +42,59 @@ const yesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); retu
 /* ---------- Answer checking ---------- */
 const strip = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 const toWords = s => s.toLowerCase().replace(/[’‘]/g, "'").replace(/[-–—]/g, ' ').replace(/[.,!?"“”:;()…]/g, ' ').split(/\s+/).filter(Boolean);
-function grade(expected, said){
+// Sound-alike keys. Chrome's Irish recogniser often writes what it hears in English spelling ("cony" for chónaí),
+// so we compare rough sound skeletons: Irish spelling rules on one side, English on the other, vowels merged.
+function irishKey(w){
+  let s = strip(w.toLowerCase()).replace(/['’-]/g, '');
+  s = s.replace(/^bhf/, 'v').replace(/^mb/, 'm').replace(/^gc/, 'g').replace(/^nd/, 'n').replace(/^ng/, 'n').replace(/^bp/, 'b').replace(/^dt/, 'd').replace(/^t(?=s)/, '').replace(/^h(?=[aeiou])/, '');
+  s = s.replace(/bh|mh/g, 'v').replace(/ph/g, 'f').replace(/fh/g, '').replace(/th|sh/g, 'h').replace(/ch/g, 'k').replace(/dh|gh/g, 'g');
+  s = s.replace(/s(?=[aeiou]*[ei])/g, 'S').replace(/t(?=[ei])/g, 'C').replace(/d(?=[ei])/g, 'J').replace(/c/g, 'k');
+  return s.replace(/[aeiouy]+/g, 'a').replace(/(.)\1+/g, '$1');
+}
+function englishKey(w){
+  let s = w.toLowerCase().replace(/['’-]/g, '');
+  s = s.replace(/tch/g, 'C').replace(/ch/g, 'C').replace(/sh/g, 'S').replace(/ph/g, 'f').replace(/wh/g, 'w').replace(/[wv]/g, 'v').replace(/ck/g, 'k')
+    .replace(/c(?=[eiy])/g, 's').replace(/[cq]/g, 'k').replace(/x/g, 'ks').replace(/gh/g, 'g').replace(/j/g, 'J');
+  return s.replace(/[aeiouy]+/g, 'a').replace(/(.)\1+/g, '$1');
+}
+function lev(a, b){
+  const d = Array.from({length:a.length + 1}, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+// How alike a heard word sounds to the expected Irish word (0–1), trying the heard word as Irish and as English spelling.
+function soundSim(expectedWord, heard){
+  const k = irishKey(expectedWord);
+  if (!k) return 0;
+  return Math.max(...[irishKey(heard), englishKey(heard)].map(h => h ? 1 - lev(k, h) / Math.max(k.length, h.length) : 0));
+}
+// spoken: the answer came from the mic, where a missing fada is the recogniser's spelling, not the speaker's mistake.
+function grade(expected, said, spoken){
   const exp = toWords(expected), got = toWords(said), used = got.map(() => false);
   const res = exp.map(w => {
     let i = got.findIndex((g, j) => !used[j] && g === w);
     if (i >= 0){ used[i] = true; return {w, s:'ok'}; }
     i = got.findIndex((g, j) => !used[j] && strip(g) === strip(w));
-    if (i >= 0){ used[i] = true; return {w, s:'fada'}; }
+    if (i >= 0){ used[i] = true; return {w, s: spoken ? 'ok' : 'fada'}; }
     return {w, s:'miss'};
   });
-  const score = res.reduce((a, r) => a + (r.s === 'ok' ? 1 : r.s === 'fada' ? 0.5 : 0), 0) / res.length;
-  return {res, score, said};
+  // Second pass: for words still missing, accept a heard word (or two run together) that sounds close.
+  res.forEach(r => {
+    if (r.s !== 'miss') return;
+    const need = irishKey(r.w).length >= 3 ? 0.65 : 0.99;
+    let best = 0, at = -1, two = false;
+    got.forEach((g, j) => {
+      if (used[j]) return;
+      const s1 = soundSim(r.w, g); if (s1 > best){ best = s1; at = j; two = false; }
+      if (j + 1 < got.length && !used[j + 1]){ const s2 = soundSim(r.w, g + got[j + 1]); if (s2 > best){ best = s2; at = j; two = true; } }
+    });
+    if (at >= 0 && best >= need){ used[at] = true; if (two) used[at + 1] = true; r.s = 'close'; r.heard = two ? got[at] + ' ' + got[at + 1] : got[at]; }
+  });
+  const score = res.reduce((a, r) => a + (r.s === 'ok' ? 1 : r.s === 'close' || r.s === 'fada' ? 0.75 : 0), 0) / res.length;
+  // Lots of English-looking words usually means the phone's Irish recogniser isn't really working.
+  const englishish = got.filter(g => /[jkqvwxyz]/.test(g) || /^(the|a|to|and|i|you|it|is|of|in|my|me|do|go|we|he|she|they|what|this|that|for|on|at|with)$/.test(g)).length;
+  return {res, score, said, english: got.length > 0 && englishish / got.length >= 0.5};
 }
 
 /* ---------- Settings and progress (stored on this phone) ---------- */
@@ -316,18 +358,24 @@ function answerBox(label, onFinal){
     stopRec(false);
     let finalText = '', failed = false;
     const r = new SR();
-    r.lang = settings.lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+    r.lang = settings.lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 5;
+    let alts = [];
     r.onresult = e => {
       let t = ''; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
       ta.value = t;
       const last = e.results[e.results.length - 1];
-      if (last.isFinal){ finalText = t; lastConfidence = last[0].confidence || 0; }
+      if (last.isFinal){
+        finalText = t; lastConfidence = last[0].confidence || 0;
+        // Every guess the recogniser offered for the last bit, so grading can use the best one.
+        const before = t.slice(0, t.length - last[0].transcript.length);
+        alts = [...last].map(a => before + a.transcript);
+      }
     };
     r.onerror = e => { failed = true; status.textContent = autoMic && e.error === 'not-allowed' ? 'Your turn: tap the mic to reply.' : micError(e.error); autoMic = false; };
     r.onend = () => {
       activeRec = null; mic.classList.remove('on'); mic.setAttribute('aria-pressed', 'false');
       if (!failed) status.textContent = 'Tap the mic and say it in Irish';
-      if (!failed && finalText.trim() && onFinal) onFinal(finalText.trim());
+      if (!failed && finalText.trim() && onFinal) onFinal(finalText.trim(), alts);
     };
     try { r.start(); activeRec = r; mic.classList.add('on'); mic.setAttribute('aria-pressed', 'true'); status.textContent = 'Ag éisteacht… · Listening. Tap again to stop.'; }
     catch(e){ status.textContent = 'Couldn’t start the mic. Tap to try again.'; }
@@ -538,15 +586,16 @@ function resultBlock(check){
   const msg = check.score >= 0.85 ? 'Maith thú! · Well done' : check.score >= 0.5 ? 'Beagnach! · Nearly, check the highlighted words' : 'Arís? · Have another go';
   return h('div', {style:'display:flex;flex-direction:column;gap:8px'},
     h('span', {class:'verdict'}, msg),
-    h('div', {class:'words'}, check.res.map(r => h('span', {class:'w ' + r.s}, r.w))),
+    h('div', {class:'words'}, check.res.map(r => h('span', {class:'w ' + r.s, title: r.heard ? 'Heard as “' + r.heard + '”' : null}, r.w))),
     h('p', {class:'heard'}, 'You said: ', h('b', {lang:'ga'}, check.said)),
-    h('span', {class:'legend'}, 'Green: right · Yellow: check the fada (accent) · Red: missing or different'),
+    check.english && check.score < 0.85 ? h('p', {class:'note'}, 'The phone seems to have heard English words. Its Irish recogniser may not be working well: try Settings → Speech recognition language, or type your answer.') : null,
+    h('span', {class:'legend'}, 'Green: right · Yellow: check the fada · Blue: sounded close (the phone may have misheard) · Red: missing or different'),
     window.coachBox ? coachBox(view) : null);
 }
-function doCheck(expected, text){
+function doCheck(expected, text, alts){
   const said = text || answerText();
   if (!said) return;
-  view.check = grade(expected, said);
+  view.check = [said].concat(text && alts ? alts : []).map(a => grade(expected, a, !!text)).reduce((b, g) => g.score > b.score ? g : b);
   view.check.conf = text ? lastConfidence : 0;   // typed answers have no recogniser confidence
   if (view.check.score >= 0.85){ progress.said = (progress.said || 0) + 1; saveProgress(); }
   // Only the first try at each item counts towards review scheduling.
@@ -554,7 +603,7 @@ function doCheck(expected, text){
   if (!view.noted[expected]){ view.noted[expected] = view.check.score; noteItem(expected, view.check.score); }
   noteWeak(view.check);
   // The talk-back coach (advisor.js) explains the result, and says it aloud if that's switched on.
-  view.coach = window.coachFor ? coachFor(expected, view.check, view) : null;
+  view.coach = window.coachFor && settings.coach !== false ? coachFor(expected, view.check, view) : null;
   render();
   if (view.coach && settings.talkBack !== false) sayEnglish(view.coach.text);
 }
@@ -593,7 +642,7 @@ function sayStep(){
       const typed = answerText(); render();
       const box = document.getElementById('answer'); if (box && typed) box.value = typed;
     }),
-    v.check ? null : answerBox('Now say it', text => doCheck(P[0], text)),
+    v.check ? null : answerBox('Now say it', (text, alts) => doCheck(P[0], text, alts)),
     resultBlock(v.check),
     h('div', {class:'row'}, v.check
       ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
@@ -611,7 +660,7 @@ function buildStep(){
     h('div', null, h('p', {class:'en', style:'font-size:14px'}, 'How would you say…'), h('p', {class:'phrase'}, D[0])),
     v.reveal || v.check ? h('p', {class:'reveal'}, 'Answer: ', h('b', {lang:'ga'}, D[1]), playBtn(audioFor(v.L, v.L.phrases.length + v.idx + 1, D[1]), D[1], {class:'btn', style:'min-height:36px;margin-left:8px'}))
       : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { v.reveal = true; render(); }}, 'Show me the answer'),
-    v.check ? null : answerBox('Say it in Irish', text => doCheck(D[1], text)),
+    v.check ? null : answerBox('Say it in Irish', (text, alts) => doCheck(D[1], text, alts)),
     resultBlock(v.check),
     h('div', {class:'row'}, v.check
       ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
@@ -760,7 +809,7 @@ function reviewView(){
         : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { v.reveal = true; render(); }}, 'Show me the answer'));
   }
   put(card, 
-    v.check ? null : answerBox(mode === 'say' ? 'Now say it' : 'Say it in Irish', text => doCheck(it.ga, text)),
+    v.check ? null : answerBox(mode === 'say' ? 'Now say it' : 'Say it in Irish', (text, alts) => doCheck(it.ga, text, alts)),
     resultBlock(v.check),
     h('div', {class:'row'}, v.check
       ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
@@ -976,7 +1025,7 @@ function settingsView(){
   let testCheck = null;
   const target = 'Dia duit, cad é mar atá tú?';
   const testOut = h('div');
-  const runTest = text => { testCheck = grade(target, text); testOut.replaceChildren(resultBlock(testCheck)); };
+  const runTest = text => { testCheck = grade(target, text, true); testOut.replaceChildren(resultBlock(testCheck)); };
   frag.append(h('section', {class:'card', 'aria-label':'Mic test'},
     h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Mic test'),
     h('p', null, 'Say this, then see what your phone heard:'),
@@ -1013,6 +1062,18 @@ function settingsView(){
       saveSettings(); saved.textContent = 'Saved.';
     }}, 'Save')), saved));
 
+  // An Spideog and the coach: each part can be switched off
+  const tog = (id, key, label) => {
+    const box = h('input', {type:'checkbox', id, checked: settings[key] !== false ? true : null, style:'width:22px;height:22px', onchange:() => { settings = {...settings, [key]: box.checked}; saveSettings(); }});
+    return h('label', {class:'row', for:id, style:'align-items:center;font-weight:700'}, box, label);
+  };
+  frag.append(h('section', {class:'card', 'aria-label':'An Spideog and the coach'},
+    h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'An Spideog and the coach'),
+    tog('robin', 'robin', 'Show An Spideog (the robin) in lessons'),
+    tog('coachnotes', 'coach', 'Show the coach’s notes after each try'),
+    tog('talkback', 'talkBack', 'Say the coach’s notes out loud'),
+    h('small', {class:'legend'}, 'Changes save straight away.')));
+
   // What the tutor remembers about this person
   if (memory().length){
     const memList = h('ul', {class:'plain'}, memory().map(f => h('li', null, f)));
@@ -1026,9 +1087,8 @@ function settingsView(){
   const azKeyIn = h('input', {type:'password', id:'azkey', autocomplete:'off', placeholder:'Azure Speech key', value:settings.azureKey});
   const azRegionIn = h('input', {type:'text', id:'azregion', autocomplete:'off', autocapitalize:'none', spellcheck:'false', placeholder:'e.g. uksouth', value:settings.azureRegion});
   const autoPlayIn = h('input', {type:'checkbox', id:'autoplay', checked: settings.autoPlay ? true : null, style:'width:22px;height:22px'});
-  const talkBackIn = h('input', {type:'checkbox', id:'talkback', checked: settings.talkBack !== false ? true : null, style:'width:22px;height:22px'});
   const voiceMsg = h('p', {class:'miclabel', role:'status'});
-  const saveVoice = () => { settings = {...settings, azureKey:azKeyIn.value.trim(), azureRegion:azRegionIn.value.trim().toLowerCase().replace(/\s+/g, ''), autoPlay:autoPlayIn.checked, talkBack:talkBackIn.checked}; saveSettings(); };
+  const saveVoice = () => { settings = {...settings, azureKey:azKeyIn.value.trim(), azureRegion:azRegionIn.value.trim().toLowerCase().replace(/\s+/g, ''), autoPlay:autoPlayIn.checked}; saveSettings(); };
   frag.append(h('section', {class:'card', 'aria-label':'Gráinne’s voice'},
     h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Gráinne’s voice'),
     h('div', {class:'field'}, h('label', {class:'lbl', for:'azkey'}, 'Azure Speech key'), azKeyIn,
@@ -1036,7 +1096,6 @@ function settingsView(){
     h('div', {class:'field'}, h('label', {class:'lbl', for:'azregion'}, 'Azure region'), azRegionIn,
       h('small', null, 'The “Location/Region” shown next to your key.')),
     h('label', {class:'row', for:'autoplay', style:'align-items:center;font-weight:700'}, autoPlayIn, 'Play ' + tutor().name + '’s replies aloud'),
-    h('label', {class:'row', for:'talkback', style:'align-items:center;font-weight:700'}, talkBackIn, 'Talk back in English after each try (the coach)'),
     h('div', {class:'row'},
       h('button', {type:'button', class:'btn', onclick: async () => {
         saveVoice();
