@@ -280,3 +280,35 @@ body.kidmode .robin{display:none}
 /* ---------- Tutor portrait in the chat ---------- */
 .scene-top{display:flex;align-items:center;gap:12px}
 .scene-top .cast.portrait{width:84px;height:84px;flex:none;background:var(--slate-track);border-radius:50%;overflow:hidden;animation:none}
+
+/* ---------- Radharcanna: the stage ---------- */
+.stage{position:relative;width:100%;aspect-ratio:4/3;border-radius:20px;overflow:hidden;border:2px solid var(--line);background:#BFDDF0}
+.stage > svg{position:absolute;inset:0;width:100%;height:100%}
+.stage .actor{position:absolute;bottom:-2%;width:44%;height:auto;aspect-ratio:1;cursor:pointer}
+.stage .actor.left{left:2%}
+.stage .actor.right{right:2%;transform:scaleX(-1)}
+@media (prefers-reduced-motion: no-preference){
+  .stage .actor.left.enter{animation:enterL .7s ease-out}
+  .stage .actor.right.enter{animation:enterR .7s ease-out}
+  .stage .actor.right{animation:none}
+}
+@keyframes enterL{from{transform:translateX(-120%)}to{transform:translateX(0)}}
+@keyframes enterR{from{transform:translateX(120%) scaleX(-1)}to{transform:translateX(0) scaleX(-1)}}
+.stage-bubble{position:absolute;top:4%;max-width:62%;background:#fff;color:#15202B;border:3px solid #15202B;border-radius:18px;padding:8px 12px;display:flex;flex-direction:column;gap:2px;box-shadow:0 3px 0 rgba(0,0,0,.15)}
+.stage-bubble.left{left:4%}
+.stage-bubble.right{right:4%}
+.stage-bubble b{font-size:17px;line-height:1.25}
+.stage-bubble small{font-size:12px;color:#4E5F67}
+.stage-bubble em{font-size:11px;font-style:normal;font-weight:800;color:#5E4300;background:#F5E2AE;border-radius:999px;padding:1px 8px;align-self:flex-start}
+.prop{position:absolute;background:transparent;border:none;cursor:pointer;border-radius:10px}
+.prop:focus-visible{outline:3px solid var(--gorse)}
+.prop.show{background:rgba(226,174,47,.25)}
+.prop.show::after{content:attr(data-label);position:absolute;left:50%;top:-6px;transform:translate(-50%,-100%);white-space:nowrap;background:#1C2B35;color:#fff;font-size:13px;font-weight:800;padding:3px 10px;border-radius:999px}
+.scene-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.scene-tile{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px;border-radius:18px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+.scene-tile[disabled]{opacity:.55;cursor:default}
+.scene-tile strong{font-size:16px}
+.scene-tile small{font-size:12px;color:var(--muted)}
+.scene-thumb{display:flex;justify-content:center}
+.scene-thumb .cast{width:64px;height:64px;animation:none}
+.scene-thumb .cast + .cast{transform:scaleX(-1);margin-left:-10px}

@@ -36,6 +36,9 @@ function kidHomeView(){
       h('span', {class:'kid-tile-pic', 'aria-hidden':'true'}, T.words[0][0]),
       h('strong', {lang:'ga'}, T.ga), h('small', null, T.en), done ? h('span', {class:'kid-star', 'aria-label':'Done'}, '⭐') : null);
   })));
+  if (window.KID_SCENES) frag.append(h('p', {class:'kid-topic', style:'text-align:left'}, '🎬 Radharcanna'), h('div', {class:'kid-grid'}, KID_SCENES.map(S =>
+    h('button', {type:'button', class:'kid-tile', onclick:() => openScene(S, 'watch')}, h('span', {class:'scene-thumb', 'aria-hidden':'true'}, castEl(S.cast.a, 'happy'), castEl(S.cast.b, 'talking')),
+      h('strong', {lang:'ga'}, S.ga), h('small', null, S.en)))));
   return frag;
 }
 
