@@ -201,7 +201,17 @@ async function warmAudio(){
 }
 const warmSoon = () => setTimeout(() => warmAudio().catch(() => {}), 3000);
 const player = new Audio();
-function playAudio(src){ try { speechSynthesis.cancel(); } catch(e){} player.onended = null; player.onpause = null; player.src = src; player.currentTime = 0; player.play().catch(() => {}); }
+// rate < 1 slows a clip down (pitch is kept); the "Mall" chip uses 0.75.
+function playAudio(src, rate){
+  try { speechSynthesis.cancel(); } catch(e){}
+  player.onended = null; player.onpause = null; player.onerror = null; player.src = src;
+  player.defaultPlaybackRate = player.playbackRate = rate || 1;
+  player.currentTime = 0; player.play().catch(() => {});
+}
+// Play a clip and resolve when it ends (or fails), for things that run in sequence.
+function playAndWait(src, rate){
+  return new Promise(res => { playAudio(src, rate); player.onended = () => res(); player.onerror = () => res(); });
+}
 // Play several clips one after another (native, then my take).
 function playSeq(srcs){
   const [first, ...rest] = srcs;
@@ -212,21 +222,43 @@ function playSeq(srcs){
 // A play button for a whole phrase: the ABAIR recording if we have one, else the phone's Irish voice, else nothing.
 // Gráinne's voice: Azure Speech (ga-IE Orla) with your own key, else the phone's Irish voice, else silence.
 const ttsCache = new Map();
-function ssml(text){
+const IRISH_VOICE = {voice:'ga-IE-OrlaNeural', lang:'ga-IE', rate:'-10%'};
+const ENGLISH_VOICE = {voice:'en-IE-EmilyNeural', lang:'en-IE', rate:'0%'};
+function ssml(text, v){
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return '<speak version="1.0" xml:lang="ga-IE"><voice name="ga-IE-OrlaNeural"><prosody rate="-10%">' + esc + '</prosody></voice></speak>';
+  return '<speak version="1.0" xml:lang="' + v.lang + '"><voice name="' + v.voice + '"><prosody rate="' + v.rate + '">' + esc + '</prosody></voice></speak>';
 }
-async function azureAudio(text){
-  if (ttsCache.has(text)) return ttsCache.get(text);
+const hasAzure = () => !!(settings.azureKey && settings.azureRegion);
+async function azureAudio(text, v){
+  v = v || IRISH_VOICE;
+  const key = v.voice + '|' + text;
+  if (ttsCache.has(key)) return ttsCache.get(key);
   const res = await fetch('https://' + encodeURIComponent(settings.azureRegion) + '.tts.speech.microsoft.com/cognitiveservices/v1', {
     method:'POST',
     headers:{ 'Ocp-Apim-Subscription-Key':settings.azureKey, 'Content-Type':'application/ssml+xml', 'X-Microsoft-OutputFormat':'audio-24khz-48kbitrate-mono-mp3' },
-    body: ssml(text)
+    body: ssml(text, v)
   });
   if (!res.ok) throw new Error('Azure ' + res.status);
   const url = URL.createObjectURL(await res.blob());
-  ttsCache.set(text, url);
+  ttsCache.set(key, url);
   return url;
+}
+// English speech for the talk-back coach and commute mode: Azure's Irish-English voice, else the phone's English voice.
+// Resolves when it has finished speaking.
+let enVoice = null;
+function loadEnVoice(){ try { const vs = speechSynthesis.getVoices(); enVoice = vs.find(v => /^en-IE/i.test(v.lang)) || vs.find(v => /^en-GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null; } catch(e){} }
+if ('speechSynthesis' in window){ loadEnVoice(); speechSynthesis.addEventListener('voiceschanged', loadEnVoice); }
+async function sayEnglish(text){
+  if (hasAzure()){
+    try { return await playAndWait(await azureAudio(text, ENGLISH_VOICE)); } catch(e){}
+  }
+  if (!('speechSynthesis' in window)) return;
+  return new Promise(res => {
+    const u = new SpeechSynthesisUtterance(text);
+    if (enVoice){ u.voice = enVoice; u.lang = enVoice.lang; } else u.lang = 'en-IE';
+    u.onend = u.onerror = () => res();
+    player.pause(); speechSynthesis.cancel(); speechSynthesis.speak(u);
+  });
 }
 async function sayGrainne(text){
   if (settings.azureKey && settings.azureRegion){
@@ -238,6 +270,11 @@ const canVoiceGrainne = () => !!(settings.azureKey && settings.azureRegion) || !
 function playBtn(src, text, props){
   if (!src && !gaVoice) return null;
   return h('button', {type:'button', 'aria-label':'Play: ' + text, ...props, onclick:() => src ? playAudio(src) : speak(text)}, icon(I.speaker, 16), 'Éist');
+}
+// The same clip at three-quarter speed, for long phrases.
+function slowBtn(src, text, props){
+  if (!src) return null;
+  return h('button', {type:'button', 'aria-label':'Play slowly: ' + text, ...props, onclick:() => playAudio(src, 0.75)}, '🐢 Mall');
 }
 
 // The answer box: a text area plus a mic button that fills it with what you said.
@@ -313,15 +350,31 @@ async function startRec(btn, status, onTake){
   status.textContent = 'Ag taifeadadh… · Recording. Tap Stop when you’ve said it.';
   recTimer = setTimeout(() => stopRec(true), 10000); // safety: stop after 10 seconds
 }
+// Whose voice the phrase audio is in, for this person's dialect.
+const nativeName = () => ({u:'Áine', c:'Sibéal', m:'Neasa'})[me().dialect] || 'Áine';
+// Shadowing: record while the native clip plays, so you speak along with her. Stops just after she finishes.
+async function startShadow(btn, status, native, onTake){
+  await startRec(btn, status, onTake);
+  if (!recorder) return;
+  status.textContent = 'Speak along with ' + nativeName() + '… (earphones help)';
+  await playAndWait(native);
+  setTimeout(() => stopRec(true), 700);
+}
+// Both clips at once: your take over hers.
+const together = new Audio();
+function playTogether(native, take){ playAudio(native); together.src = take; together.currentTime = 0; together.play().catch(() => {}); }
 function recordRow(native, take, onTake){
   if (!canRecord) return null;
-  const status = h('p', {class:'miclabel', role:'status'}, take ? '' : 'Record yourself, then compare with Áine.');
+  const who = nativeName();
+  const status = h('p', {class:'miclabel', role:'status'}, take ? '' : 'Record yourself, then compare with ' + who + '. Or speak along with her.');
   const btn = h('button', {type:'button', class:'btn rec', 'aria-pressed':'false', onclick:() => recorder ? stopRec(true) : startRec(btn, status, onTake)},
     h('span', {class:'dot', 'aria-hidden':'true'}), take ? 'Arís · Re-record' : 'Taifead · Record');
+  const shadow = native ? h('button', {type:'button', class:'btn', onclick:() => { if (!recorder) startShadow(btn, status, native, onTake); }}, '🎙️ Labhair léi · Speak along') : null;
   return h('div', {class:'compare'},
-    h('div', {class:'row'}, btn,
+    h('div', {class:'row'}, btn, take ? null : shadow,
       take ? h('button', {type:'button', class:'btn', onclick:() => playAudio(take)}, icon(I.speaker, 16), 'Mise · Me') : null,
-      take && native ? h('button', {type:'button', class:'btn primary grow', onclick:() => playSeq([native, take])}, 'Áine, then me') : null),
+      take && native ? h('button', {type:'button', class:'btn primary grow', onclick:() => playSeq([native, take])}, who + ', then me') : null),
+    take && native ? h('div', {class:'row'}, shadow, h('button', {type:'button', class:'btn', onclick:() => playTogether(native, take)}, '🎧 Le chéile · Together')) : null,
     status);
 }
 
@@ -398,6 +451,8 @@ function homeView(){
         h('p', {class:'en', style:'font-size:14px'}, doneToday ? 'Come back tomorrow, or practise a few more now.' : due ? Math.min(due, REVIEW_SIZE) + ' phrases due · about 3 minutes' : 'Nothing due. Practise anyway?')),
       h('button', {type:'button', class:'btn ' + (doneToday || !due ? '' : 'primary'), onclick:openReview}, doneToday || !due ? 'Practise more' : 'Tosaigh · Start')));
   }
+  frag.append(h('div', {class:'tools'},
+    h('button', {type:'button', class:'tool', onclick:() => openCommute()}, h('span', {'aria-hidden':'true'}, '🎧'), h('strong', null, 'Hands-free'), h('small', null, 'For a walk or the car'))));
   for (const U of course()){
     const done = U.lessons.filter(l => progress.done[l.id]).length;
     frag.append(
@@ -467,7 +522,7 @@ function doCheck(expected, text){
 }
 function hearRow(P, src){
   return h('div', {class:'hear'}, 'Hear it:',
-    playBtn(src, P[0]),
+    playBtn(src, P[0]), slowBtn(src, P[0]),
     P[3].map(w => h('a', {href:'https://www.teanglann.ie/en/fuaim/' + encodeURIComponent(w.toLowerCase()), target:'_blank', rel:'noopener'}, icon(I.speaker, 16), w)));
 }
 function advance(listKey, score, last){
@@ -627,7 +682,7 @@ function reviewView(){
     put(card, 
       h('div', null, h('p', {class:'phrase', lang:'ga'}, it.ga), h('p', {class:'en'}, it.en)),
       it.sound ? h('p', {class:'say'}, 'Sound it out: ', h('b', null, it.sound)) : null,
-      h('div', {class:'hear'}, playBtn(src, it.ga)),
+      h('div', {class:'hear'}, playBtn(src, it.ga), slowBtn(src, it.ga)),
       recordRow(src, v.takes[v.idx], url => { v.takes[v.idx] = url; if (view === v){ const typed = answerText(); render(); const box = document.getElementById('answer'); if (box && typed) box.value = typed; } }));
   } else {
     put(card, 
