@@ -123,7 +123,7 @@ function sceneView(){
 function sceneCheck(expected, text, alts){
   const v = view, said = text || answerText();
   if (!said) return;
-  v.check = [said].concat(text && alts ? alts : []).map(a => grade(expected, a, !!text)).reduce((b, g) => g.score > b.score ? g : b);
+  v.check = [said].concat(text && alts ? alts : []).map(a => grade(expected, a, !!text, soundFor(expected))).reduce((b, g) => g.score > b.score ? g : b);
   v.check.conf = text ? lastConfidence : 0;
   noteWeak(v.check);
   v.coach = window.coachFor && settings.coach !== false ? coachFor(expected, v.check, v) : null;

@@ -52,7 +52,7 @@ function irishKey(w){
   return s.replace(/[aeiouy]+/g, 'a').replace(/(.)\1+/g, '$1');
 }
 function englishKey(w){
-  let s = w.toLowerCase().replace(/['’-]/g, '');
+  let s = w.toLowerCase().replace(/['’-]/g, '').replace(/([aeiou])[wy]/g, '$1').replace(/([aeiou])[wy]$/, '$1');
   s = s.replace(/tch/g, 'C').replace(/ch/g, 'C').replace(/sh/g, 'S').replace(/ph/g, 'f').replace(/wh/g, 'w').replace(/[wv]/g, 'v').replace(/ck/g, 'k')
     .replace(/c(?=[eiy])/g, 's').replace(/[cq]/g, 'k').replace(/x/g, 'ks').replace(/gh/g, 'g').replace(/j/g, 'J');
   return s.replace(/[aeiouy]+/g, 'a').replace(/(.)\1+/g, '$1');
@@ -70,7 +70,7 @@ function soundSim(expectedWord, heard){
   return Math.max(...[irishKey(heard), englishKey(heard)].map(h => h ? 1 - lev(k, h) / Math.max(k.length, h.length) : 0));
 }
 // spoken: the answer came from the mic, where a missing fada is the recogniser's spelling, not the speaker's mistake.
-function grade(expected, said, spoken){
+function grade(expected, said, spoken, sound){
   const exp = toWords(expected), got = toWords(said), used = got.map(() => false);
   const res = exp.map(w => {
     let i = got.findIndex((g, j) => !used[j] && g === w);
@@ -79,7 +79,15 @@ function grade(expected, said, spoken){
     if (i >= 0){ used[i] = true; return {w, s: spoken ? 'ok' : 'fada'}; }
     return {w, s:'miss'};
   });
-  // Second pass: for words still missing, accept a heard word (or two run together) that sounds close.
+  // Second pass: two expected words heard as one ("Cé seo" → "Keisha"). If a pair of missing neighbours sounds like one heard word, both count.
+  for (let k = 0; k + 1 < res.length; k++){
+    const a = res[k], b = res[k + 1];
+    if (a.s !== 'miss' || b.s !== 'miss') continue;
+    let best = 0, at = -1;
+    got.forEach((g, j) => { if (!used[j]){ const s = soundSim(a.w + b.w, g); if (s > best){ best = s; at = j; } } });
+    if (at >= 0 && best >= 0.7){ used[at] = true; a.s = b.s = 'close'; a.heard = b.heard = got[at]; k++; }
+  }
+  // Third pass: for words still missing, accept a heard word (or two run together) that sounds close.
   res.forEach(r => {
     if (r.s !== 'miss') return;
     const need = irishKey(r.w).length >= 3 ? 0.65 : 0.99;
@@ -91,7 +99,13 @@ function grade(expected, said, spoken){
     });
     if (at >= 0 && best >= need){ used[at] = true; if (two) used[at + 1] = true; r.s = 'close'; r.heard = two ? got[at] + ' ' + got[at + 1] : got[at]; }
   });
-  const score = res.reduce((a, r) => a + (r.s === 'ok' ? 1 : r.s === 'close' || r.s === 'fada' ? 0.75 : 0), 0) / res.length;
+  // Whole-phrase check against the sound-it-out line ("JEE-a gwitch"): if what the phone wrote sounds like
+  // the pronunciation guide, the remaining words count as close too. This catches Ulster sounds spelling rules miss.
+  if (sound && res.some(r => r.s === 'miss')){
+    const a = englishKey(sound.replace(/[^a-z\s]/gi, ' ').replace(/\s+/g, '')), b = englishKey(got.join(''));
+    if (a && b && 1 - lev(a, b) / Math.max(a.length, b.length) >= 0.7) res.forEach(r => { if (r.s === 'miss'){ r.s = 'close'; r.heard = r.heard || said; } });
+  }
+  const score = res.reduce((a, r) => a + (r.s === 'ok' ? 1 : r.s === 'close' ? 0.9 : r.s === 'fada' ? 0.75 : 0), 0) / res.length;
   // Lots of English-looking words usually means the phone's Irish recogniser isn't really working.
   const englishish = got.filter(g => /[jkqvwxyz]/.test(g) || /^(the|a|to|and|i|you|it|is|of|in|my|me|do|go|we|he|she|they|what|this|that|for|on|at|with)$/.test(g)).length;
   return {res, score, said, english: got.length > 0 && englishish / got.length >= 0.5};
@@ -592,10 +606,12 @@ function resultBlock(check){
     h('span', {class:'legend'}, 'Green: right · Yellow: check the fada · Blue: sounded close (the phone may have misheard) · Red: missing or different'),
     window.coachBox ? coachBox(view) : null);
 }
+// The sound-it-out guide for a phrase, if the course has one.
+function soundFor(ga){ for (const L of allLessons()) for (const p of (L.phrases || [])) if (p[0] === ga) return p[2]; return ''; }
 function doCheck(expected, text, alts){
   const said = text || answerText();
   if (!said) return;
-  view.check = [said].concat(text && alts ? alts : []).map(a => grade(expected, a, !!text)).reduce((b, g) => g.score > b.score ? g : b);
+  view.check = [said].concat(text && alts ? alts : []).map(a => grade(expected, a, !!text, soundFor(expected))).reduce((b, g) => g.score > b.score ? g : b);
   view.check.conf = text ? lastConfidence : 0;   // typed answers have no recogniser confidence
   if (view.check.score >= 0.85){ progress.said = (progress.said || 0) + 1; saveProgress(); }
   // Only the first try at each item counts towards review scheduling.
@@ -1040,6 +1056,9 @@ function settingsView(){
     h('div', null,
       h('p', {lang:'ga'}, 'Úsáidtear teicneolaíocht urlabhra agus teanga ABAIR sa tionscadal seo. Tá tuilleadh eolais ar shuíomh ', h('a', {href:'https://abair.ie', target:'_blank', rel:'noopener'}, 'abair.ie'), '.'),
       h('small', null, 'Phrase audio: ABAIR speech technology, Trinity College Dublin.'))));
+  const ver = h('p', {class:'legend', style:'text-align:center'}, 'Labhair');
+  if ('caches' in window) caches.keys().then(k => { const v = k.filter(x => /^labhair-vd+$/.test(x)).sort().pop(); if (v) ver.textContent = 'Labhair ' + v.replace('labhair-', ''); }).catch(() => {});
+  frag.append(ver);
 
   // Claude key and model
   const keyIn = h('input', {type:'password', id:'key', autocomplete:'off', placeholder:'sk-ant-…', value:settings.key});
@@ -1159,5 +1178,17 @@ function settingsView(){
 
 /* ---------- Start (after every script has loaded, so kid mode and the rest are in place) ---------- */
 document.addEventListener('DOMContentLoaded', () => render());
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+// Updates: check whenever the app comes back to the front. When a new version takes over,
+// Home reloads straight away; anywhere else a bar offers to reload, so a lesson isn't cut off.
+if ('serviceWorker' in navigator){
+  const hadController = !!navigator.serviceWorker.controller;
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') navigator.serviceWorker.getRegistration().then(r => r && r.update()).catch(() => {}); });
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) return;
+    if (view.name === 'home' && !activeRec && !recorder){ location.reload(); return; }
+    if (document.querySelector('.update-bar')) return;
+    document.body.append(h('div', {class:'update-bar', role:'status'}, 'A new version of Labhair is ready.', h('button', {type:'button', class:'btn primary', onclick:() => location.reload()}, 'Reload')));
+  });
+}
 warmSoon();

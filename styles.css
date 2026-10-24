@@ -332,3 +332,7 @@ body.kidmode .robin{display:none}
 .top .row{flex-wrap:nowrap}
 .chip .short{display:none}
 @media (max-width:440px){ .chip .long{display:none} .chip .short{display:inline} .brand{font-size:26px} }
+
+/* Update-ready bar */
+.update-bar{position:fixed;left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top, 0px));z-index:40;display:flex;align-items:center;gap:12px;background:var(--slate);color:var(--slate-fg);border-radius:14px;padding:8px 8px 8px 14px;font-weight:700;font-size:14px;box-shadow:0 6px 18px rgba(0,0,0,.25);width:max-content;max-width:calc(100% - 32px)}
+.update-bar .btn{min-height:38px}

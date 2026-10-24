@@ -69,12 +69,18 @@ function coachFor(expected, check, v){
     details.push('Check the fada on “' + word(r.w) + '”' + (ch ? ': the ' + ch + ' says “' + FADA_SOUND[ch] + '”.' : '.'));
   }
   lines.push(...details.slice(0, 2));
-  if (close.length && details.length < 2) lines.push('The phone wrote ' + close.slice(0, 2).map(r => '“' + word(r.w) + '” as “' + r.heard + '”').join(' and ') + ', but it sounded close, so I’ve counted it.');
+  if (close.length && details.length < 2){
+    // Group words the phone heard as one ("Cé seo" as "Keisha").
+    const groups = [];
+    for (const r of close){ const g = groups.find(x => x.heard === r.heard); if (g) g.words.push(word(r.w)); else groups.push({heard:r.heard, words:[word(r.w)]}); }
+    lines.push('The phone wrote ' + groups.slice(0, 2).map(g => '“' + g.words.join(' ') + '” as “' + g.heard + '”').join(' and ') + ', but it sounded right, so I’ve counted it.');
+  }
   if (check.english && check.score < 0.85) lines.push('It sounds like the phone heard English, so its Irish recogniser may be struggling. Try the other Irish option in Settings, or type it.');
-  if (check.score < 0.85 && details.length < 2 && note && note.lit) lines.push('Word for word, it’s “' + note.lit + '”.');
+  if (check.score < 0.85 && miss.length && details.length < 2 && note && note.lit) lines.push('Word for word, it’s “' + note.lit + '”.');
   // How clearly the phone heard you (the recogniser's confidence, not a native speaker's ear).
-  if (check.conf){
-    if (check.conf >= 0.8) lines.push(check.score >= 0.85 ? 'The phone heard you clearly, too.' : 'The phone heard you clearly, so it’s the words, not the accent.');
+  if (check.conf && !(close.length && check.score >= 0.85)){
+    // A confident recogniser can still be confidently wrong about Irish, so never blame the speaker for it.
+    if (check.conf >= 0.8) lines.push(check.score >= 0.85 ? 'The phone heard you clearly, too.' : 'The phone was sure it heard “' + check.said + '”, but it often mishears Irish. If you matched ' + nativeName() + '’s recording, trust that over this score.');
     else if (check.conf >= 0.5) lines.push('The phone wasn’t fully sure what it heard, so try it a touch slower.');
     else lines.push('I couldn’t quite catch that. Try a little slower, and closer to the phone.');
   }
