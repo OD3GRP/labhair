@@ -325,3 +325,8 @@ body.kidmode .robin{display:none}
 .story-tip small{color:var(--slate-muted)}
 .kid-tile.together{min-height:120px;justify-content:center;font-size:15px}
 .kid-tile.together span{font-size:40px}
+
+/* Home header: keep it on one line on phones */
+.top .row{flex-wrap:nowrap}
+.chip .short{display:none}
+@media (max-width:440px){ .chip .long{display:none} .chip .short{display:inline} .brand{font-size:26px} }
