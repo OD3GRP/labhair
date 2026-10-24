@@ -49,6 +49,10 @@ node tools/make-audio.mjs
 ```
 It only makes missing or changed files. It needs `ABAIR_API_KEY` in `.env` (gitignored). Optional: `ABAIR_VOICE`, `ABAIR_SPEED`. Run `node tools/make-audio.mjs --voices` to see the voices. Then bump `VERSION` in `sw.js`. ABAIR's terms require the credit and logo, which are on the Settings screen.
 
+## Gráinne's voice (Azure)
+
+Gráinne's chat replies are spoken by Azure's Irish voice (ga-IE Orla). In Settings, paste your Azure Speech key and region (portal.azure.com → your Speech resource → Keys and Endpoint), then tap **Test**. Without a key she stays silent. The free F0 tier covers 0.5 million characters a month.
+
 ## How the mic works
 
 Chrome's built-in speech recognition, set to Irish (`ga-IE`). If it struggles, try `ga` in Settings. You can always type instead. Grading is word by word: green = right, yellow = right word but check the fada, red = missing or different.

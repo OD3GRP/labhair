@@ -50,7 +50,7 @@ function grade(expected, said){
 }
 
 /* ---------- Settings and progress (stored on this phone) ---------- */
-const DEFAULT_SETTINGS = { key:'', model:'claude-sonnet-5-5', lang:'ga-IE', autoSend:false, voiceCheck:'speech' };
+const DEFAULT_SETTINGS = { key:'', model:'claude-sonnet-5-5', lang:'ga-IE', autoSend:false, voiceCheck:'speech', azureKey:'', azureRegion:'', autoPlay:true };
 let settings = {...DEFAULT_SETTINGS, ...store.get('labhair-settings', {})};
 const saveSettings = () => store.set('labhair-settings', settings);
 let progress = {done:{}, streak:0, lastDay:'', said:0, ...store.get('labhair-progress', {})};
@@ -97,6 +97,31 @@ function audioFor(L, n, text){
 const player = new Audio();
 function playAudio(src){ try { speechSynthesis.cancel(); } catch(e){} player.src = src; player.currentTime = 0; player.play().catch(() => {}); }
 // A play button for a whole phrase: the ABAIR recording if we have one, else the phone's Irish voice, else nothing.
+// Gráinne's voice: Azure Speech (ga-IE Orla) with your own key, else the phone's Irish voice, else silence.
+const ttsCache = new Map();
+function ssml(text){
+  const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return '<speak version="1.0" xml:lang="ga-IE"><voice name="ga-IE-OrlaNeural"><prosody rate="-10%">' + esc + '</prosody></voice></speak>';
+}
+async function azureAudio(text){
+  if (ttsCache.has(text)) return ttsCache.get(text);
+  const res = await fetch('https://' + encodeURIComponent(settings.azureRegion) + '.tts.speech.microsoft.com/cognitiveservices/v1', {
+    method:'POST',
+    headers:{ 'Ocp-Apim-Subscription-Key':settings.azureKey, 'Content-Type':'application/ssml+xml', 'X-Microsoft-OutputFormat':'audio-24khz-48kbitrate-mono-mp3' },
+    body: ssml(text)
+  });
+  if (!res.ok) throw new Error('Azure ' + res.status);
+  const url = URL.createObjectURL(await res.blob());
+  ttsCache.set(text, url);
+  return url;
+}
+async function sayGrainne(text){
+  if (settings.azureKey && settings.azureRegion){
+    try { playAudio(await azureAudio(text)); return; } catch(e){}
+  }
+  speak(text);
+}
+const canVoiceGrainne = () => !!(settings.azureKey && settings.azureRegion) || !!gaVoice;
 function playBtn(src, text, props){
   if (!src && !gaVoice) return null;
   return h('button', {type:'button', 'aria-label':'Play: ' + text, ...props, onclick:() => src ? playAudio(src) : speak(text)}, icon(I.speaker, 16), 'Éist');
@@ -112,6 +137,8 @@ function answerBox(label, onFinal){
   }
   function toggle(){
     if (activeRec){ activeRec.stop(); return; }
+    // Stop any audio so the mic doesn't hear Gráinne or the phrase recording.
+    player.pause(); try { speechSynthesis.cancel(); } catch(e){}
     let finalText = '', failed = false;
     const r = new SR();
     r.lang = settings.lang; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
@@ -332,7 +359,7 @@ function talkStep(){
   for (const m of c.msgs){
     if (m.who === 'g') list.append(h('div', {class:'msg g'},
       h('div', {class:'bubble', lang:'ga'}, m.ga), m.en ? h('small', null, m.en) : null,
-      gaVoice ? h('button', {type:'button', class:'say-again', onclick:() => speak(m.ga)}, 'Éist · Hear it') : null));
+      canVoiceGrainne() ? h('button', {type:'button', class:'say-again', 'aria-label':'Play again: ' + m.ga, onclick:() => sayGrainne(m.ga)}, icon(I.speaker, 14), 'Éist arís · Replay') : null));
     else list.append(h('div', {class:'msg me'}, h('div', {class:'bubble', lang:'ga'}, m.text),
       m.recast ? h('div', {class:'fix'}, h('b', {lang:'ga'}, 'Níos fearr: ' + m.recast), m.note ? h('div', null, m.note) : null) : null));
   }
@@ -371,7 +398,7 @@ async function sendChat(){
     if (view !== v) return;
     const mine = c.msgs[c.msgs.length - 1];
     if (typeof r.recast === 'string' && r.recast.trim()){ mine.recast = r.recast.trim(); mine.note = typeof r.note === 'string' ? r.note : ''; }
-    if (typeof r.reply === 'string' && r.reply){ c.msgs.push({who:'g', ga:r.reply, en: typeof r.english === 'string' ? r.english : ''}); c.turns.push({role:'assistant', content:JSON.stringify(r)}); speak(r.reply); }
+    if (typeof r.reply === 'string' && r.reply){ c.msgs.push({who:'g', ga:r.reply, en: typeof r.english === 'string' ? r.english : ''}); c.turns.push({role:'assistant', content:JSON.stringify(r)}); if (settings.autoPlay) sayGrainne(r.reply); }
     if (Array.isArray(r.goalsMet)) c.goalsMet = Array.from(new Set(c.goalsMet.concat(r.goalsMet.map(String))));
     if (r.done === true) c.done = true;
   } catch(e){
@@ -456,7 +483,7 @@ function settingsView(){
     h('p', {class:'phrase', lang:'ga', style:'font-size:22px'}, target),
     answerBox('What your phone heard', runTest),
     testOut,
-    h('p', {class:'legend'}, 'Voice for Gráinne: ' + (gaVoice ? gaVoice.name + ' (Irish)' : 'no Irish voice on this phone, so use the teanglann.ie links'))));
+    h('p', {class:'legend'}, 'Voice for Gráinne: ' + (settings.azureKey && settings.azureRegion ? 'Azure (Orla, Irish)' : gaVoice ? gaVoice.name + ' (Irish)' : 'none yet. Add an Azure key below'))));
 
   // ABAIR credit (their terms require the wording and logo)
   frag.append(h('section', {class:'card credit', 'aria-label':'Credits'},
@@ -483,6 +510,30 @@ function settingsView(){
       settings = {...settings, key:keyIn.value.trim(), model:modelIn.value, lang:langIn.value, autoSend:autoIn.checked};
       saveSettings(); saved.textContent = 'Saved.';
     }}, 'Save')), saved));
+
+  // Gráinne's voice (Azure Speech)
+  const azKeyIn = h('input', {type:'password', id:'azkey', autocomplete:'off', placeholder:'Azure Speech key', value:settings.azureKey});
+  const azRegionIn = h('input', {type:'text', id:'azregion', autocomplete:'off', autocapitalize:'none', spellcheck:'false', placeholder:'e.g. uksouth', value:settings.azureRegion});
+  const autoPlayIn = h('input', {type:'checkbox', id:'autoplay', checked: settings.autoPlay ? true : null, style:'width:22px;height:22px'});
+  const voiceMsg = h('p', {class:'miclabel', role:'status'});
+  const saveVoice = () => { settings = {...settings, azureKey:azKeyIn.value.trim(), azureRegion:azRegionIn.value.trim().toLowerCase().replace(/\s+/g, ''), autoPlay:autoPlayIn.checked}; saveSettings(); };
+  frag.append(h('section', {class:'card', 'aria-label':'Gráinne’s voice'},
+    h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Gráinne’s voice'),
+    h('div', {class:'field'}, h('label', {class:'lbl', for:'azkey'}, 'Azure Speech key'), azKeyIn,
+      h('small', null, 'Stored only on this phone and sent only to Microsoft. From your Speech resource in ', h('a', {href:'https://portal.azure.com', target:'_blank', rel:'noopener'}, 'portal.azure.com'), ' → Keys and Endpoint.')),
+    h('div', {class:'field'}, h('label', {class:'lbl', for:'azregion'}, 'Azure region'), azRegionIn,
+      h('small', null, 'The “Location/Region” shown next to your key.')),
+    h('label', {class:'row', for:'autoplay', style:'align-items:center;font-weight:700'}, autoPlayIn, 'Play Gráinne’s replies aloud'),
+    h('div', {class:'row'},
+      h('button', {type:'button', class:'btn', onclick: async () => {
+        saveVoice();
+        if (!settings.azureKey || !settings.azureRegion){ voiceMsg.textContent = 'Add your key and region first.'; return; }
+        voiceMsg.textContent = 'Testing…';
+        try { playAudio(await azureAudio('Dia duit, ' + window.LEARNER.vocative + '!')); voiceMsg.textContent = 'Working. You should hear Gráinne.'; }
+        catch(e){ voiceMsg.textContent = 'That didn’t work (' + e.message + '). Check the key and region.'; }
+      }}, icon(I.speaker, 16), 'Test'),
+      h('button', {type:'button', class:'btn primary grow', onclick:() => { saveVoice(); voiceMsg.textContent = 'Saved.'; }}, 'Save')),
+    voiceMsg));
 
   // Progress
   const confirmBox = h('div', {class:'row', hidden:true},

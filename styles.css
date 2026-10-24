@@ -118,7 +118,7 @@ textarea:focus,input:focus,select:focus{border-color:var(--green);outline:none}
 .msg.g .bubble{background:var(--surface);border:1px solid var(--line);border-top-left-radius:4px}
 .msg.me .bubble{background:var(--green);color:var(--green-ink);border-top-right-radius:4px}
 .msg small{font-size:13px;color:var(--muted)}
-.msg .say-again{align-self:flex-start;border:none;background:none;color:var(--green-text);font-weight:800;font-size:13px;padding:4px 0;cursor:pointer}
+.msg .say-again{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;min-height:32px;border:none;background:none;color:var(--green-text);font-weight:800;font-size:13px;padding:4px 0;cursor:pointer}
 .fix{background:var(--gorse-soft);color:var(--gorse-text);border-radius:12px;padding:8px 12px;font-size:14px}
 .typing{font-size:14px;color:var(--muted);font-style:italic}
 .err{background:var(--red-soft);color:var(--red-text);border-radius:12px;padding:10px 12px;font-size:14px}
