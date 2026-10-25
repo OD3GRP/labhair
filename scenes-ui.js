@@ -103,9 +103,9 @@ function sceneView(){
       h('span', {class:'eyebrow', style:'color:var(--gorse-text)'}, 'Your line'),
       h('p', {class:'phrase', style:'font-size:20px'}, ln.en),
       v.check ? h('p', {class:'reveal'}, 'The line: ', h('b', {lang:'ga'}, ln.ga)) : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:e => { e.currentTarget.replaceWith(h('p', {class:'reveal'}, h('b', {lang:'ga'}, ln.ga))); }}, 'Show me the line'),
-      v.check ? null : answerBox('Say it in Irish', (text, alts) => sceneCheck(ln.ga, text, alts)),
+      v.check ? null : answerBox('Say it in Irish', (text, alts, take) => sceneCheck(ln.ga, text, alts, take)),
       resultBlock(v.check),
-      h('div', {class:'row'}, v.check
+      v.check && v.check.spoken ? null : h('div', {class:'row'}, v.check
         ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; view.coach = null; render(); }}, 'Try again'),
            h('button', {type:'button', class:'btn primary grow', onclick:() => sceneContinue(ln)}, 'Ar aghaidh · Carry on')]
         : [h('button', {type:'button', class:'btn', onclick:() => sceneContinue(ln)}, 'Skip'), h('button', {type:'button', class:'btn primary grow', onclick:() => sceneCheck(ln.ga)}, 'Check')])));
@@ -120,9 +120,10 @@ function sceneView(){
   }
   return frag;
 }
-function sceneCheck(expected, text, alts){
+function sceneCheck(expected, text, alts, take){
   const v = view, said = text || answerText();
   if (!said) return;
+  if (text){ v.onNext = () => sceneContinue(sceneLine(v.S.lines[v.i], v.d)); return doCheck(expected, text, alts, take); }
   v.check = [said].concat(text && alts ? alts : []).map(a => grade(expected, a, !!text, soundFor(expected))).reduce((b, g) => g.score > b.score ? g : b);
   v.check.conf = text ? lastConfidence : 0;
   noteWeak(v.check);

@@ -341,3 +341,13 @@ body.kidmode .robin{display:none}
 .meter{height:12px;border-radius:999px;background:var(--sunk);overflow:hidden}
 .meter i{display:block;height:100%;width:0;background:var(--green);transition:width .08s}
 .miclog{max-height:220px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-all;margin:0;user-select:text;-webkit-user-select:text}
+
+/* The teacher's response to a spoken try */
+.spoken{display:flex;flex-direction:column;gap:10px}
+.spoken .heard small{color:var(--muted);font-size:12px}
+.teacher{display:flex;gap:12px;align-items:flex-start;background:var(--green-soft);border-radius:16px;padding:12px}
+.teacher .cast{width:64px;height:64px;flex:none;border-radius:50%;overflow:hidden;background:var(--surface);animation:none}
+.teacher-body{display:flex;flex-direction:column;gap:6px;min-width:0}
+.teacher-body p{font-size:15px;line-height:1.45}
+.teacher-tip{font-weight:700;color:var(--green-text)}
+.self-mark .btn.suggested{box-shadow:0 0 0 3px var(--gorse)}

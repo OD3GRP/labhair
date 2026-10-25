@@ -384,10 +384,11 @@ function answerBox(label, onFinal){
       const r = await L.promise;
       mic.classList.remove('on'); mic.setAttribute('aria-pressed', 'false');
       ta.value = r.text; lastConfidence = r.confidence;
+      const take = r.audio ? URL.createObjectURL(r.audio) : null; if (take) takeUrls.push(take);
       micLog('azure: heard', {text:r.text, conf:r.confidence, alts:r.alts.length});
       status.textContent = 'Tap the mic and say it in Irish';
       autoMic = false;
-      if (r.text.trim() && onFinal) onFinal(r.text.trim(), r.alts);
+      if (r.text.trim() && onFinal) onFinal(r.text.trim(), r.alts, take);
     } catch(e){
       mic.classList.remove('on'); mic.setAttribute('aria-pressed', 'false');
       if (e.code !== 'cancelled') status.textContent = listenError(e);
@@ -629,6 +630,7 @@ function lessonView(){
 
 function resultBlock(check){
   if (!check) return null;
+  if (check.spoken) return window.spokenBlock ? spokenBlock(view, check) : null;
   const msg = check.score >= 0.85 ? 'Maith thú! · Well done' : check.score >= 0.5 ? 'Beagnach! · Nearly, check the highlighted words' : 'Arís? · Have another go';
   return h('div', {style:'display:flex;flex-direction:column;gap:8px'},
     h('span', {class:'verdict'}, msg),
@@ -640,9 +642,22 @@ function resultBlock(check){
 }
 // The sound-it-out guide for a phrase, if the course has one.
 function soundFor(ga){ for (const L of allLessons()) for (const p of (L.phrases || [])) if (p[0] === ga) return p[2]; return ''; }
-function doCheck(expected, text, alts){
+function doCheck(expected, text, alts, take){
   const said = text || answerText();
   if (!said) return;
+  // Spoken: the transcript is only a clue, so nothing is marked automatically. The teacher (advisor.js) responds,
+  // and you mark yourself (selfMark) when you're happy.
+  if (text){
+    const v = view;
+    v.attempts = v.attempts || {};
+    const tries = v.attempts[expected] = (v.attempts[expected] || []).concat(text);
+    v.check = {spoken:true, expected, said:text, alts:alts || [], conf:lastConfidence, take:take || null, engine: window.useAzureSTT && useAzureSTT() ? 'azure' : 'phone', tries};
+    v.coach = null;
+    if (window.micLog) micLog('spoken attempt', {expected, said:text, conf:lastConfidence, engine:v.check.engine});
+    render();
+    if (window.teacherFeedback && settings.key && settings.coach !== false) teacherFeedback(v, v.check);
+    return;
+  }
   view.check = [said].concat(text && alts ? alts : []).map(a => grade(expected, a, !!text, soundFor(expected))).reduce((b, g) => g.score > b.score ? g : b);
   view.check.conf = text ? lastConfidence : 0;   // typed answers have no recogniser confidence
   if (view.check.score >= 0.85){ progress.said = (progress.said || 0) + 1; saveProgress(); }
@@ -678,6 +693,7 @@ function advance(listKey, score, last){
 
 function sayStep(){
   const v = view, P = v.L.phrases[v.idx], last = v.idx === v.L.phrases.length - 1;
+  v.onNext = score => advance('said', score, last);
   return h('section', {class:'card', 'aria-label':'Say it'},
     h('div', {style:'display:flex;justify-content:space-between;align-items:baseline;gap:8px'},
       h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Abair é · Say it'),
@@ -691,9 +707,9 @@ function sayStep(){
       const typed = answerText(); render();
       const box = document.getElementById('answer'); if (box && typed) box.value = typed;
     }),
-    v.check ? null : answerBox('Now say it', (text, alts) => doCheck(P[0], text, alts)),
+    v.check ? null : answerBox('Now say it', (text, alts, take) => doCheck(P[0], text, alts, take)),
     resultBlock(v.check),
-    h('div', {class:'row'}, v.check
+    v.check && v.check.spoken ? null : h('div', {class:'row'}, v.check
       ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
          h('button', {type:'button', class:'btn primary grow', onclick:() => advance('said', v.check.score, last)}, last ? 'On to Tóg é' : 'Next phrase')]
       : [h('button', {type:'button', class:'btn', onclick:() => advance('said', 0, last)}, 'Skip'),
@@ -702,6 +718,7 @@ function sayStep(){
 
 function buildStep(){
   const v = view, D = v.L.drills[v.idx], last = v.idx === v.L.drills.length - 1;
+  v.onNext = score => advance('drills', score, last);
   return h('section', {class:'card', 'aria-label':'Build it'},
     h('div', {style:'display:flex;justify-content:space-between;align-items:baseline;gap:8px'},
       h('span', {class:'eyebrow', style:'color:var(--muted)'}, 'Tóg é · Build it'),
@@ -709,9 +726,9 @@ function buildStep(){
     h('div', null, h('p', {class:'en', style:'font-size:14px'}, 'How would you say…'), h('p', {class:'phrase'}, D[0])),
     v.reveal || v.check ? h('p', {class:'reveal'}, 'Answer: ', h('b', {lang:'ga'}, D[1]), playBtn(audioFor(v.L, v.L.phrases.length + v.idx + 1, D[1]), D[1], {class:'btn', style:'min-height:36px;margin-left:8px'}))
       : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { v.reveal = true; render(); }}, 'Show me the answer'),
-    v.check ? null : answerBox('Say it in Irish', (text, alts) => doCheck(D[1], text, alts)),
+    v.check ? null : answerBox('Say it in Irish', (text, alts, take) => doCheck(D[1], text, alts, take)),
     resultBlock(v.check),
-    h('div', {class:'row'}, v.check
+    v.check && v.check.spoken ? null : h('div', {class:'row'}, v.check
       ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
          h('button', {type:'button', class:'btn primary grow', onclick:() => advance('drills', v.check.score, last)}, last ? 'On to Comhrá' : 'Next')]
       : [h('button', {type:'button', class:'btn primary grow', onclick:() => doCheck(D[1])}, 'Check')]));
@@ -838,6 +855,7 @@ function reviewView(){
     h('div', {class:'rbar', role:'progressbar', 'aria-valuemin':'0', 'aria-valuemax':String(total), 'aria-valuenow':String(pos)},
       h('i', {style:'width:' + Math.round(pos / total * 100) + '%'}))));
   if (v.done) return frag.append(reviewDone()), frag;
+  v.onNext = () => reviewNext();
   const it = v.items[v.idx], src = audioFor(it.L, it.n, it.ga);
   const mode = it.mode === 'listen' && !src ? 'build' : it.mode;   // no audio, no listening
   const card = h('section', {class:'card', 'aria-label':'Review'},
@@ -858,9 +876,9 @@ function reviewView(){
         : h('button', {type:'button', class:'btn', style:'align-self:flex-start', onclick:() => { v.reveal = true; render(); }}, 'Show me the answer'));
   }
   put(card, 
-    v.check ? null : answerBox(mode === 'say' ? 'Now say it' : 'Say it in Irish', (text, alts) => doCheck(it.ga, text, alts)),
+    v.check ? null : answerBox(mode === 'say' ? 'Now say it' : 'Say it in Irish', (text, alts, take) => doCheck(it.ga, text, alts, take)),
     resultBlock(v.check),
-    h('div', {class:'row'}, v.check
+    v.check && v.check.spoken ? null : h('div', {class:'row'}, v.check
       ? [h('button', {type:'button', class:'btn', onclick:() => { v.check = null; render(); }}, 'Try again'),
          h('button', {type:'button', class:'btn primary grow', onclick:reviewNext}, v.idx === total - 1 ? 'Críochnaigh · Finish' : 'Next')]
       : [h('button', {type:'button', class:'btn', onclick:reviewNext}, 'Skip'),

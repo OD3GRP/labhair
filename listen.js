@@ -23,7 +23,8 @@ function azureListen(onState){
       // Let Azure judge anything that isn't near-silence; the level gate only decides when to stop.
       if (!heardSpeech && peak < 0.003){ reject({code:'no-speech'}); return; }
       onState && onState('checking');
-      try { resolve(await sendToAzure(toWav(chunks, rate))); } catch(e){ micLog('azure: failed', e); reject(e); }
+      const wav = toWav(chunks, rate);
+      try { resolve({...(await sendToAzure(wav)), audio:wav}); } catch(e){ micLog('azure: failed', e); reject(e); }
     };
     try {
       stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, channelCount:1}});
